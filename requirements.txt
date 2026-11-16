@@ -1,0 +1,6 @@
+numpy
+scipy
+pandas
+requests
+pydantic>=2
+pytest
