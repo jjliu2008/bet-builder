@@ -19,7 +19,8 @@ from typing import Callable, Deque, Dict, Mapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel
 
-from .books import Book, expiry_key, to_utc
+from .books import Book, Level, expiry_key, to_utc
+from .fairvalue import fair_hidden
 
 Point = Tuple[datetime, float]
 
@@ -34,11 +35,14 @@ class StaleConfig(BaseModel):
             "moved" for rule (a) (default 30).
         fair_band: the distance from fair, in $, that counts as "agrees with fair" for rule (b)
             (default 0.02).
+        min_fair_hours: rule (b) is skipped when the contract expires in less than this many
+            hours, matching the API hiding fair value there (default 2).
     """
     min_gap: float = 0.04
     frozen_window_s: float = 300.0
     btc_move_bp: float = 30.0
     fair_band: float = 0.02
+    min_fair_hours: float = 2.0
 
 
 class History:
@@ -129,7 +133,8 @@ def check_quote(this: Book, other: Book, fair: Optional[float] = None,
 
     Args:
         this, other: threshold Books for the same asset, expiry, and strike, on different venues.
-        fair: the Deribit fair probability P(S_T >= K), in $, or None to skip rule (b).
+        fair: the Deribit fair probability P(S_T >= K), in $, or None to skip rule (b). Rule (b)
+            is also skipped within `config.min_fair_hours` of expiry.
         quote_history: {contract_id: [(time, mid $)]}, used for rule (a). If this book has no
             history, its `updated` timestamp is used instead: an `updated` older than the window
             counts as unchanged.
@@ -163,7 +168,7 @@ def check_quote(this: Book, other: Book, fair: Optional[float] = None,
         mins = cfg.frozen_window_s / 60
         reasons.append(f"it hasn't changed in {mins:g} min while BTC moved {move:.0f} bp")
 
-    if fair is not None:
+    if fair is not None and not fair_hidden(this.expiry, now, cfg.min_fair_hours):
         d_other, d_this = abs(o - fair), abs(m - fair)
         if d_other <= cfg.fair_band + 1e-9 and d_this > cfg.fair_band + 1e-9:
             reasons.append(f"{_venue(other.venue)} is within {cfg.fair_band * 100:g}¢ of fair "
@@ -230,3 +235,143 @@ def make_stale_fn(books: Sequence[Book], expiry: Optional[str] = None,
         return flags.get(round(book.strike, 2), {}).get(book.venue)
 
     return fn
+
+
+# ---- snapshot replay ---------------------------------------------------------------------
+# One JSON object per line. "type" is "book" (the default when missing), "spot", or "fair".
+# See docs/api_contract.md, "Snapshot log format".
+
+class ReplayEvent(BaseModel):
+    """One stale-flag transition found during replay.
+
+    Attributes:
+        ts: the snapshot time at which the flag changed (UTC).
+        asset, expiry: e.g. "BTC" and "2026-11-20T22:00".
+        strike: the threshold strike in $.
+        venue: the flagged venue.
+        event: "raised" when the flag appears, "cleared" when it goes away, or "active" for a
+            flag that is still on (only with every=True).
+        reason: the detector's reason string. For "cleared", the last reason seen.
+    """
+    ts: datetime
+    asset: str
+    expiry: str
+    strike: float
+    venue: str
+    event: str
+    reason: Optional[str]
+
+
+def book_to_record(book: Book, ts: Optional[datetime] = None) -> dict:
+    """Serialize a Book to one snapshot-log record (a JSON-ready dict). `ts` defaults to book.updated."""
+    return {
+        "type": "book", "ts": iso_ms(ts or book.updated), "venue": book.venue,
+        "contract_id": book.contract_id, "asset": book.asset, "expiry": expiry_key(book.expiry),
+        "kind": book.kind, "strike": book.strike, "lo": book.lo, "hi": book.hi,
+        "yes_bids": [[l.price, l.size] for l in book.yes_bids],
+        "yes_asks": [[l.price, l.size] for l in book.yes_asks],
+        "settlement_index": book.settlement_index, "link": book.link,
+    }
+
+
+def record_to_book(rec: Mapping) -> Book:
+    """Parse a "book" snapshot record back into a Book. The record's `ts` becomes `updated`."""
+    lv = lambda xs: [Level(price=float(p), size=float(s)) for p, s in (xs or []) if float(s) > 0]
+    return Book(venue=rec["venue"], contract_id=rec["contract_id"], asset=rec.get("asset", "BTC"),
+                expiry=rec["expiry"], kind=rec.get("kind", "threshold"), strike=rec.get("strike"),
+                lo=rec.get("lo"), hi=rec.get("hi"), yes_bids=lv(rec.get("yes_bids")),
+                yes_asks=lv(rec.get("yes_asks")), updated=rec["ts"],
+                settlement_index=rec.get("settlement_index", ""), link=rec.get("link", ""))
+
+
+def iso_ms(dt: datetime) -> str:
+    """Format a UTC timestamp as ISO 8601 with milliseconds and a 'Z' suffix."""
+    return to_utc(dt).strftime("%Y-%m-%dT%H:%M:%S.") + f"{to_utc(dt).microsecond // 1000:03d}Z"
+
+
+def load_snapshots(path: str) -> list:
+    """Read a JSON-lines snapshot log, skipping blank lines and lines starting with '#'.
+
+    Raises:
+        ValueError: a line isn't valid JSON. The message includes the line number.
+    """
+    import json
+    out = []
+    with open(path, encoding="utf-8") as f:
+        for n, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path}:{n}: {e}") from e
+    return out
+
+
+def replay(records: Sequence[Mapping], config: Optional[StaleConfig] = None,
+           every: bool = False) -> list:
+    """Run the stale detector over a saved snapshot log, as if live.
+
+    Records are applied in time order. After all records sharing a timestamp are applied, the
+    detector runs over the latest book per contract, with `now` = that timestamp. It uses the
+    quote and spot history accumulated so far and the latest fair value per strike.
+
+    Args:
+        records: parsed snapshot records (see `load_snapshots`), in any order.
+        config: the stale thresholds.
+        every: if True, also emit an "active" event at every evaluation where a flag stays on.
+
+    Returns:
+        A list of ReplayEvent in time order. By default only "raised" and "cleared"
+        transitions are included.
+    """
+    recs = sorted(records, key=lambda r: to_utc(r["ts"]))
+    books: Dict[str, Book] = {}
+    fair: Dict[tuple, Dict[float, float]] = defaultdict(dict)
+    hist = History(max_age_s=10 ** 9)
+    active: Dict[tuple, str] = {}
+    events = []
+    i = 0
+    while i < len(recs):
+        ts = to_utc(recs[i]["ts"])
+        while i < len(recs) and to_utc(recs[i]["ts"]) == ts:
+            r = recs[i]
+            kind = r.get("type", "book")
+            if kind == "book":
+                b = record_to_book(r)
+                books[b.contract_id] = b
+                hist.record_book(b, ts)
+            elif kind == "spot":
+                hist.record_spot(r.get("asset", "BTC"), float(r["price"]), ts)
+            elif kind == "fair":
+                fair[(r.get("asset", "BTC").upper(), expiry_key(r["expiry"]))][round(float(r["strike"]), 2)] = float(r["p_above"])
+            i += 1
+        series = hist.as_mapping()
+        seen = set()
+        for asset, exp in sorted({(b.asset, expiry_key(b.expiry)) for b in books.values()}):
+            group = [b for b in books.values() if b.asset == asset and expiry_key(b.expiry) == exp]
+            flags = stale_flags(group, exp, fair.get((asset, exp)), series,
+                                series.get(f"spot:{asset}", []), ts, config)
+            for k, row in flags.items():
+                for venue, reason in row.items():
+                    key = (asset, exp, k, venue)
+                    seen.add(key)
+                    prev = active.get(key)
+                    if reason and not prev:
+                        events.append(ReplayEvent(ts=ts, asset=asset, expiry=exp, strike=k, venue=venue,
+                                                  event="raised", reason=reason))
+                    elif reason and every:
+                        events.append(ReplayEvent(ts=ts, asset=asset, expiry=exp, strike=k, venue=venue,
+                                                  event="active", reason=reason))
+                    elif prev and not reason:
+                        events.append(ReplayEvent(ts=ts, asset=asset, expiry=exp, strike=k, venue=venue,
+                                                  event="cleared", reason=prev))
+                    if reason:
+                        active[key] = reason
+                    else:
+                        active.pop(key, None)
+        for key in [k for k in active if k not in seen]:   # contract disappeared from the log
+            events.append(ReplayEvent(ts=ts, asset=key[0], expiry=key[1], strike=key[2], venue=key[3],
+                                      event="cleared", reason=active.pop(key)))
+    return events

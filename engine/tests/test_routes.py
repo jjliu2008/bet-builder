@@ -121,14 +121,17 @@ def test_other_expiries_ignored():
 
 
 def test_fair_and_stale_hooks_and_verdict():
+    from datetime import timedelta
+    from .conftest import EXP
     books = [mk("gemini", 68000, asks=[(0.24, 250)])]
-    r = price_route(req(type="above", lo=68000), books,
+    t = EXP - timedelta(days=1)
+    r = price_route(req(type="above", lo=68000), books, now=t,
                     fair_fn=lambda rq: 0.20, stale_fn=lambda b: "quote frozen")
     assert r.fair_value == 0.20 and r.verdict == "overpriced"   # 0.26 vs 0.20
     assert r.stale_warnings and "quote frozen" in r.stale_warnings[0]
-    r2 = price_route(req(type="above", lo=68000), books, fair_fn=lambda rq: 0.30)
+    r2 = price_route(req(type="above", lo=68000), books, fair_fn=lambda rq: 0.30, now=t)
     assert r2.verdict == "good deal"
-    r3 = price_route(req(type="above", lo=68000), books, fair_fn=lambda rq: 0.25)
+    r3 = price_route(req(type="above", lo=68000), books, fair_fn=lambda rq: 0.25, now=t)
     assert r3.verdict == "fair"
 
 
@@ -161,3 +164,21 @@ def test_warns_when_cost_exceeds_payout():
     books = _buckets([0.40, 0.40, 0.40])
     r = price_route(req(type="between", lo=66000, hi=67500), books)
     assert r.total_cost > 1 and any("cannot profit" in w for w in r.warnings)
+
+
+def test_fair_hidden_close_to_expiry():
+    from datetime import timedelta
+    from .conftest import EXP
+    books = [mk("gemini", 68000, asks=[(0.24, 250)])]
+    called = []
+    fair_fn = lambda rq: called.append(1) or 0.20
+    near = price_route(req(type="above", lo=68000), books, fair_fn=fair_fn,
+                       now=EXP - timedelta(hours=1, minutes=59))
+    assert near.fair_value is None and near.verdict == "n/a (too close to expiry)" and not called
+    far = price_route(req(type="above", lo=68000), books, fair_fn=fair_fn,
+                      now=EXP - timedelta(hours=2, minutes=1))
+    assert far.fair_value == 0.20 and far.verdict == "overpriced"
+    rows = build_ladder(books, "BTC", EXP_KEY, fair={68000: 0.2}, now=EXP - timedelta(minutes=30))
+    assert rows[0]["fair"] is None
+    rows = build_ladder(books, "BTC", EXP_KEY, fair={68000: 0.2}, now=EXP - timedelta(hours=3))
+    assert rows[0]["fair"] == 0.2

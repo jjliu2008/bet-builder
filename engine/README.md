@@ -106,6 +106,13 @@ Each book holds YES bids and asks. **Buying NO costs 1 − YES bid** and fills a
 
 Both thresholds are configurable.
 
+**Near-expiry cutoff.** Under 2 hours to expiry (`RouteConfig.min_fair_hours`), routes return `fair_value = null` and `verdict = "n/a (too close to expiry)"`, and ladder `fair` is null. In that window the Deribit surface says little about the venues' settlement averaging and index basis.
+
+**Diagnostic.** `scripts/diagnose_fair.py --expiry <key>` compares our SVI digitals with model-free Deribit call spreads, (C(K1) − C(K2)) / (K2 − K1) using marks in $, and with the venue mids.
+- On 2026-11-16, for the Nov 17 22:00 expiry, SVI matched the call spreads within 0.8¢ on average.
+- Both sat 4–6¢ above the venues at the 63500–64750 strikes.
+- So the gap was in the venues, not in the fit.
+
 ### Stale detector
 
 A threshold quote is flagged when **|mid − other venue's mid| > 4¢** and at least one of these holds:
@@ -115,7 +122,9 @@ A threshold quote is flagged when **|mid − other venue's mid| > 4¢** and at l
   - With under 5 min of history, rule (a) never fires.
 - **(b) Off fair.** The other venue's mid is within 2¢ of fair and this one isn't.
 
-Every flag carries a reason string, for example: `Gemini mid 0.300 is 9.0¢ from Kalshi's 0.210; Kalshi is within 2¢ of fair 0.220 but this quote is 8.0¢ away`. All thresholds are in `StaleConfig`. The history is an argument, `{contract_id: [(t, mid)]}`, and the backend logger supplies it. `History` is a minimal in-memory version.
+Every flag carries a reason string, for example: `Gemini mid 0.300 is 9.0¢ from Kalshi's 0.210; Kalshi is within 2¢ of fair 0.220 but this quote is 8.0¢ away`. All thresholds are in `StaleConfig`.
+
+**Replay.** `replay(records)` runs the detector over a saved JSON-lines snapshot log and returns raised and cleared events. `scripts/replay_stale.py LOG.jsonl` is the CLI version. The format is in `docs/api_contract.md`. The history is an argument, `{contract_id: [(t, mid)]}`, and the backend logger supplies it. `History` is a minimal in-memory version.
 
 ## Known limits
 

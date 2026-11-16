@@ -18,7 +18,8 @@ from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .books import Book, Fill, Side, cost_to_buy, expiry_key, iso
-from .fairvalue import GOOD_DEAL_THRESHOLD, OVERPRICED_THRESHOLD, verdict
+from .fairvalue import (GOOD_DEAL_THRESHOLD, MIN_FAIR_HOURS, OVERPRICED_THRESHOLD, TOO_CLOSE_VERDICT,
+                        fair_hidden, verdict)
 
 BetType = Literal["above", "below", "between"]
 _EPS = 1e-9
@@ -80,10 +81,13 @@ class RouteConfig(BaseModel):
         round_fees: True rounds each order's fee up to the next cent (venue rule).
         good_threshold: $ below fair that counts as a "good deal".
         over_threshold: $ above fair that counts as "overpriced".
+        min_fair_hours: below this many hours to expiry, fair value is hidden (fair_value=None,
+            verdict="n/a (too close to expiry)"). Default 2.
     """
     round_fees: bool = True
     good_threshold: float = GOOD_DEAL_THRESHOLD
     over_threshold: float = OVERPRICED_THRESHOLD
+    min_fair_hours: float = MIN_FAIR_HOURS
 
 
 class Leg(BaseModel):
@@ -381,7 +385,7 @@ def _leg(f: Fill) -> Leg:
 def price_route(request: RouteRequest, books: Sequence[Book],
                 fair_fn: Optional[Callable[[RouteRequest], Optional[float]]] = None,
                 stale_fn: Optional[Callable[[Book], Optional[str]]] = None,
-                config: Optional[RouteConfig] = None) -> Route:
+                config: Optional[RouteConfig] = None, now: Optional[datetime] = None) -> Route:
     """Price the cheapest way to build `request` from `books`.
 
     Args:
@@ -392,10 +396,12 @@ def price_route(request: RouteRequest, books: Sequence[Book],
         stale_fn: optional. Takes a Book and returns a reason string if that book's quote looks
             stale, else None. Each book used by the chosen route is checked.
             `engine.stale.make_stale_fn` builds one.
-        config: fee rounding and verdict thresholds.
+        config: fee rounding, verdict thresholds, and the fair-value cutoff near expiry.
+        now: the evaluation time, used for the near-expiry cutoff (default: now, UTC).
 
     Returns:
-        A Route. Its costs are per contract, in $, including fees. `total_cost` is the effective
+        A Route. Under `config.min_fair_hours` to expiry, `fair_value` is None and `verdict`
+        is "n/a (too close to expiry)", and fair_fn is not called. Its costs are per contract, in $, including fees. `total_cost` is the effective
         cost, which nets out the guaranteed $1 of a two-leg build. `best_single_venue_cost` is the
         cheapest complete build using only one venue.
 
@@ -438,7 +444,8 @@ def price_route(request: RouteRequest, books: Sequence[Book],
     if best.effective >= 1.0 - _EPS:
         warnings.append(f"Effective cost {best.effective:.4f} is at least the $1 payout: this build cannot profit")
 
-    fair = fair_fn(request) if fair_fn else None
+    too_close = fair_hidden(request.expiry, now, cfg.min_fair_hours)
+    fair = fair_fn(request) if (fair_fn and not too_close) else None
     stale_warnings: List[str] = []
     if stale_fn:
         for b in {id(f.book): f.book for f in best.fills}.values():
@@ -454,10 +461,10 @@ def price_route(request: RouteRequest, books: Sequence[Book],
         best_single_venue_cost=None if best_single is None else round(best_single, 6),
         savings=None if best_single is None else round(best_single - best.effective, 6),
         fair_value=None if fair is None else round(fair, 6),
-        verdict=verdict(total, fair, cfg.good_threshold, cfg.over_threshold),
+        verdict=TOO_CLOSE_VERDICT if too_close else verdict(total, fair, cfg.good_threshold, cfg.over_threshold),
         stale_warnings=stale_warnings,
         mixed_settlement_index=len(best.venues) > 1,
-        timestamp=iso(datetime.now(timezone.utc)),
+        timestamp=iso(now or datetime.now(timezone.utc)),
         build=best.cand.build,
         cash_outlay=round(best.cash, 6),
         guaranteed_payout=best.cand.guaranteed,
@@ -480,7 +487,9 @@ def _quote(b: Optional[Book]) -> Optional[dict]:
 
 def build_ladder(books: Sequence[Book], asset: str, expiry: str,
                  fair: Optional[Dict[float, float]] = None,
-                 stale: Optional[Dict[float, Dict[str, Optional[str]]]] = None) -> List[dict]:
+                 stale: Optional[Dict[float, Dict[str, Optional[str]]]] = None,
+                 now: Optional[datetime] = None,
+                 min_fair_hours: float = MIN_FAIR_HOURS) -> List[dict]:
     """Build the GET /ladder payload for one asset and expiry. Only threshold books are used.
 
     Args:
@@ -489,12 +498,16 @@ def build_ladder(books: Sequence[Book], asset: str, expiry: str,
         expiry: an expiry string or datetime, matched to the minute.
         fair: optional {strike $: P(S_T >= K)}, e.g. from `fairvalue.fair_above`.
         stale: optional {strike $: {venue: reason or None}}, e.g. from `stale.stale_flags`.
+        now: the evaluation time, used for the near-expiry cutoff (default: now, UTC).
+        min_fair_hours: under this many hours to expiry, every row's `fair` is None.
 
     Returns:
         A list of rows sorted by strike, shaped as in docs/api_contract.md. Venue quotes are in
         $/contract, sizes are in contracts, and `fair` is a probability.
     """
     thresholds, _, _ = _index(books, asset, expiry_key(expiry))
+    if fair_hidden(expiry_key(expiry), now, min_fair_hours):
+        fair = None
     rows = []
     for k in sorted(thresholds):
         by_venue = {b.venue: b for b in thresholds[k]}

@@ -94,3 +94,32 @@ def test_history_store_prunes():
     assert h.series("x") == [(NOW, 0.31)]
     h.record_spot("btc", 65000, NOW)
     assert "spot:BTC" in h.as_mapping()
+
+
+def test_replay_sample_log():
+    import os
+    from engine.stale import load_snapshots, replay
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "samples", "snapshots_sample.jsonl")
+    ev = replay(load_snapshots(path))
+    assert [(e.event, e.venue, e.strike, f"{e.ts:%H:%M}") for e in ev] == [
+        ("raised", "gemini", 68000, "15:05"), ("cleared", "gemini", 68000, "15:07")]
+    assert "hasn't changed in 5 min while BTC moved 46 bp" in ev[0].reason
+    every = replay(load_snapshots(path), every=True)
+    assert [e.event for e in every] == ["raised", "active", "cleared"]
+    assert "within 2¢ of fair 0.215" in every[1].reason
+    # a looser config raises earlier (3 min window)
+    early = replay(load_snapshots(path), StaleConfig(frozen_window_s=180))
+    assert early[0].event == "raised" and f"{early[0].ts:%H:%M}" == "15:03"
+
+
+def test_book_record_roundtrip():
+    from engine.stale import book_to_record, record_to_book
+    b = bk("kalshi", 0.21)
+    r = record_to_book(book_to_record(b, NOW))
+    assert (r.contract_id, r.strike, r.mid, r.updated) == (b.contract_id, b.strike, b.mid, NOW)
+
+
+def test_off_fair_rule_skipped_near_expiry():
+    g, k = bk("gemini", 0.30), bk("kalshi", 0.21)
+    assert check_quote(g, k, fair=0.22, now=EXP - timedelta(hours=1)) is None
+    assert check_quote(g, k, fair=0.22, now=EXP - timedelta(hours=3)) is not None

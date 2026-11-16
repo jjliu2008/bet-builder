@@ -39,6 +39,30 @@ _MONTHS = {m: i + 1 for i, m in enumerate(
 
 
 # ---- verdict -----------------------------------------------------------------------------
+MIN_FAIR_HOURS = 2.0
+TOO_CLOSE_VERDICT = "n/a (too close to expiry)"
+
+
+def fair_hidden(expiry: datetime | str, now: Optional[datetime] = None,
+                min_hours: float = MIN_FAIR_HOURS) -> bool:
+    """Return True when fair value should not be shown because the expiry is too close.
+
+    Under ~2 hours, the Deribit surface (whose first expiry is 08:00 UTC) says little about
+    venue settlement averaging and index basis, so the API hides fair value instead of showing
+    a misleading number.
+
+    Args:
+        expiry: the bet's settlement time (ISO string or datetime, UTC).
+        now: the evaluation time (default: now, UTC).
+        min_hours: the minimum time to expiry, in hours, for fair value to be shown (default 2).
+
+    Returns:
+        True if the time to expiry is under `min_hours`, including expiries already past.
+    """
+    now = to_utc(now) if now else datetime.now(timezone.utc)
+    return (to_utc(expiry) - now).total_seconds() < min_hours * 3600.0
+
+
 def verdict(cost: Optional[float], fair: Optional[float],
             good_threshold: float = GOOD_DEAL_THRESHOLD,
             over_threshold: float = OVERPRICED_THRESHOLD) -> Optional[str]:

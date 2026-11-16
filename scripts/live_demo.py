@@ -13,12 +13,14 @@ import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from engine.books import to_utc  # noqa: E402
 from engine import RouteRequest, StrikeNotFound, RouteError, price_route  # noqa: E402
 from engine.dev_fetch import fetch_all, fetch_spot, list_expiries, matched_expiries  # noqa: E402
-from engine.fairvalue import fair_above, get_surface, make_fair_fn  # noqa: E402
-from engine.stale import History, make_stale_fn, stale_flags  # noqa: E402
+from engine.fairvalue import fair_above, fair_hidden, get_surface, make_fair_fn  # noqa: E402
+from engine.stale import History, book_to_record, iso_ms, make_stale_fn, stale_flags  # noqa: E402
 
 
 def nearest_strike(strikes, x):
@@ -38,6 +40,8 @@ def show_route(label, req, books, **kw):
           f"best single venue={r.best_single_venue_cost}  savings={r.savings}  mixed_index={r.mixed_settlement_index}")
     if r.fair_value is not None:
         print(f"   fair={r.fair_value:.4f}  verdict={r.verdict}")
+    elif r.verdict:
+        print(f"   fair=null  verdict={r.verdict}")
     for w in r.warnings + r.stale_warnings:
         print("   !", w)
     alts = ", ".join(f"{a.build}[{'+'.join(a.venues)}]={a.total_cost:.4f}" for a in r.alternatives)
@@ -88,6 +92,7 @@ def main():
                     help="skip expiries closing sooner than this when picking the default")
     ap.add_argument("--loops", type=int, default=1, help="snapshots to take (history for stale rule a)")
     ap.add_argument("--interval", type=float, default=60, help="seconds between snapshots")
+    ap.add_argument("--record", default=None, help="append snapshots to this JSON-lines log (replayable)")
     args = ap.parse_args()
 
     spot = fetch_spot(args.asset)
@@ -112,6 +117,15 @@ def main():
                 raise
             continue
         books = snap
+        if args.record:
+            import json
+            ts = datetime.now(timezone.utc)
+            nl = chr(10)
+            with open(args.record, "a", encoding="utf-8", newline=nl) as f:
+                for b in books:
+                    f.write(json.dumps(book_to_record(b, ts), separators=(",", ":")) + nl)
+                f.write(json.dumps({"type": "spot", "ts": iso_ms(ts), "asset": args.asset.upper(),
+                                    "price": spot}) + nl)
         for b in books:
             history.record_book(b)
         history.record_spot(args.asset, spot)
@@ -123,6 +137,8 @@ def main():
     surface = get_surface(args.asset)
     print(f"Deribit surface: {len(surface.slices)} expiries, first {surface.slices[0].expiry:%Y-%m-%d %H:%M}Z")
     fair = fair_table(books, expiry, surface, spot)
+    if fair_hidden(expiry):
+        print("(under 2h to expiry: the API hides these fair values and the routes show verdict n/a)")
     fair_fn = make_fair_fn(surface)
 
     hist = history.as_mapping()
