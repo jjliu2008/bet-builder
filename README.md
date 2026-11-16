@@ -27,7 +27,12 @@ python -m venv .venv
 pip install -r requirements.txt
 pytest
 python scripts/live_demo.py      # needs internet; all endpoints are public, no keys
+python scripts/live_demo.py --expiry 2026-11-20T22:00 --size 25
+python scripts/live_demo.py --loops 7 --interval 55   # ~6 min of quote history for the frozen-quote rule
 ```
+
+The backend imports the engine directly (`from engine import price_route, build_ladder, ...`).
+For usage, units, and the math, see `engine/README.md`.
 
 ## Architecture overview
 

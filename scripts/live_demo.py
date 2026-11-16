@@ -104,8 +104,14 @@ def main():
     for i in range(args.loops):
         if i:
             time.sleep(args.interval)
-        books = fetch_all(args.asset, expiry)
-        spot = fetch_spot(args.asset)
+        try:
+            snap, spot = fetch_all(args.asset, expiry), fetch_spot(args.asset)
+        except Exception as e:  # network hiccup: keep the previous snapshot
+            print(f"  snapshot {i + 1} failed ({type(e).__name__}); skipping")
+            if i == args.loops - 1 and "books" not in locals():
+                raise
+            continue
+        books = snap
         for b in books:
             history.record_book(b)
         history.record_spot(args.asset, spot)

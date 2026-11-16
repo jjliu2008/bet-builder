@@ -28,10 +28,18 @@ KALSHI_INDEX = "CF Benchmarks BRTI, 60s average"
 
 def _get(url: str, params: Optional[dict] = None, session: Optional[requests.Session] = None,
          retries: int = 4) -> dict:
+    """GET a public JSON endpoint, retrying 429s, timeouts, and connection errors with exponential backoff."""
     s = session or requests
     for attempt in range(retries):
-        r = s.get(url, params=params, headers=UA, timeout=TIMEOUT)
-        if r.status_code == 429 and attempt < retries - 1:
+        last = attempt == retries - 1
+        try:
+            r = s.get(url, params=params, headers=UA, timeout=TIMEOUT)
+        except (requests.Timeout, requests.ConnectionError):
+            if last:
+                raise
+            time.sleep(0.5 * 2 ** attempt)
+            continue
+        if r.status_code in (429, 502, 503, 504) and not last:
             time.sleep(0.5 * 2 ** attempt)
             continue
         r.raise_for_status()
