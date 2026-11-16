@@ -435,6 +435,8 @@ def price_route(request: RouteRequest, books: Sequence[Book],
     warnings: List[str] = []
     if best.filled < size - _EPS:
         warnings.append(f"Only {best.filled:g} of {size:g} contracts are fillable from visible depth")
+    if best.effective >= 1.0 - _EPS:
+        warnings.append(f"Effective cost {best.effective:.4f} is at least the $1 payout: this build cannot profit")
 
     fair = fair_fn(request) if fair_fn else None
     stale_warnings: List[str] = []

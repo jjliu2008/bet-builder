@@ -1,18 +1,24 @@
-"""Live demo: fetch public Gemini + Kalshi books and print the cheapest routes for a few BTC bets.
+"""Live demo: fetch public Gemini, Kalshi, and Deribit data, then print fair values, stale flags, and the cheapest routes for a few BTC bets.
 
-Usage:  python scripts/live_demo.py [--expiry 2026-11-20T22:00] [--size 10]
+Usage:
+    python scripts/live_demo.py [--expiry 2026-11-20T22:00] [--size 10]
+    python scripts/live_demo.py --loops 7 --interval 60   # builds 6 min of quote history for the "frozen quote" rule
 """
 from __future__ import annotations
 
 import argparse
 import os
 import sys
+import time
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from engine.books import to_utc  # noqa: E402
 from engine import RouteRequest, StrikeNotFound, RouteError, price_route  # noqa: E402
 from engine.dev_fetch import fetch_all, fetch_spot, list_expiries, matched_expiries  # noqa: E402
 from engine.fairvalue import fair_above, get_surface, make_fair_fn  # noqa: E402
+from engine.stale import History, make_stale_fn, stale_flags  # noqa: E402
 
 
 def nearest_strike(strikes, x):
@@ -65,7 +71,8 @@ def fair_table(books, expiry, surface, spot):
             ok = lo <= f <= hi
             inside += ok
             tag = "ok" if ok else "OUTSIDE mids+/-2c"
-        q = lambda b: f"{b.best_bid or 0:.2f}/{b.best_ask or 0:.2f}"
+        px = lambda x: "  - " if x is None else f"{x:.2f}"
+        q = lambda b: f"{px(b.best_bid)}/{px(b.best_ask)}"
         m = lambda b: f"{b.mid:.3f}" if b.mid is not None else "  -  "
         print(f"{k:>8.0f} {q(g):>13} {q(kk):>13} {m(g):>8} {m(kk):>8} {f:>7.3f}  {tag}")
     print(f"fair monotone decreasing in K: {mono_ok};  liquid strikes with fair inside venue mids (+/-2c): {inside}/{liquid}")
@@ -77,6 +84,10 @@ def main():
     ap.add_argument("--asset", default="BTC")
     ap.add_argument("--expiry", default=None, help="expiry key, default: nearest matched expiry")
     ap.add_argument("--size", type=float, default=10)
+    ap.add_argument("--min-minutes", type=float, default=15,
+                    help="skip expiries closing sooner than this when picking the default")
+    ap.add_argument("--loops", type=int, default=1, help="snapshots to take (history for stale rule a)")
+    ap.add_argument("--interval", type=float, default=60, help="seconds between snapshots")
     args = ap.parse_args()
 
     spot = fetch_spot(args.asset)
@@ -86,8 +97,20 @@ def main():
     if not expiries:
         print("no matched expiries right now")
         return
-    expiry = args.expiry or expiries[0]
-    books = fetch_all(args.asset, expiry)
+    now = datetime.now(timezone.utc)
+    live = [e for e in expiries if (to_utc(e) - now).total_seconds() > 60 * args.min_minutes]
+    expiry = args.expiry or (live or expiries)[0]
+    history = History()
+    for i in range(args.loops):
+        if i:
+            time.sleep(args.interval)
+        books = fetch_all(args.asset, expiry)
+        spot = fetch_spot(args.asset)
+        for b in books:
+            history.record_book(b)
+        history.record_spot(args.asset, spot)
+        if args.loops > 1:
+            print(f"  snapshot {i + 1}/{args.loops}: spot {spot:,.2f}")
     print(f"expiry {expiry}: {sum(b.venue == 'gemini' for b in books)} Gemini books, "
           f"{sum(b.venue == 'kalshi' for b in books)} Kalshi books; matched={matched_expiries(books, args.asset)}")
 
@@ -95,6 +118,16 @@ def main():
     print(f"Deribit surface: {len(surface.slices)} expiries, first {surface.slices[0].expiry:%Y-%m-%d %H:%M}Z")
     fair = fair_table(books, expiry, surface, spot)
     fair_fn = make_fair_fn(surface)
+
+    hist = history.as_mapping()
+    spot_hist = hist.get(f"spot:{args.asset.upper()}", [])
+    flags = stale_flags(books, expiry, fair, hist, spot_hist)
+    flagged = [(k, v, r) for k, row in sorted(flags.items()) for v, r in row.items() if r]
+    print()
+    print(f"stale flags: {len(flagged)}")
+    for k, v, r in flagged:
+        print(f"  {k:>8.0f} {v:7s} {r}")
+    stale_fn = make_stale_fn(books, expiry, fair, hist, spot_hist)
 
     gem_strikes = sorted({b.strike for b in books if b.venue == "gemini" and b.kind == "threshold"})
     if not gem_strikes:
@@ -105,7 +138,7 @@ def main():
     k_dn = nearest_strike(gem_strikes, spot * 0.98)
 
     mk = lambda **kw: RouteRequest(asset=args.asset, expiry=expiry, size=args.size, **kw)
-    kw = dict(fair_fn=fair_fn)
+    kw = dict(fair_fn=fair_fn, stale_fn=stale_fn)
     show_route("above ATM", mk(type="above", lo=k_atm), books, **kw)
     show_route("above +2%", mk(type="above", lo=k_up), books, **kw)
     show_route("below -2%", mk(type="below", hi=k_dn), books, **kw)

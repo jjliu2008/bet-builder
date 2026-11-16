@@ -155,3 +155,9 @@ def test_ladder_shape():
     assert r["gemini"]["bid"] == 0.21 and r["kalshi"]["ask_size"] == 400
     assert r["fair"] == 0.23 and r["stale"] == {"gemini": False, "kalshi": True}
     assert rows[1]["gemini"] is None
+
+
+def test_warns_when_cost_exceeds_payout():
+    books = _buckets([0.40, 0.40, 0.40])
+    r = price_route(req(type="between", lo=66000, hi=67500), books)
+    assert r.total_cost > 1 and any("cannot profit" in w for w in r.warnings)
