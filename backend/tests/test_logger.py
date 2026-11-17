@@ -345,7 +345,7 @@ def test_full_queue_drops_instead_of_waiting(tmp_path):
     env = Env(tmp_path, background=True, every_n_polls=1)
     gate = threading.Event()
     real = env.logger._write
-    env.logger._write = lambda *job: (gate.wait(10), real(*job))
+    env.logger._write = lambda *job: (gate.wait(60), real(*job))   # 25 polls can take >10 s on a slow machine
     for i in range(25):                                              # the queue holds 20
         env.t += timedelta(seconds=INTERVAL)
         asyncio.run(env.poller.poll_once())
