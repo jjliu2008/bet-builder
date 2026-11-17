@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import httpx
@@ -46,6 +46,7 @@ class Settings:
     asset: str = "BTC"
     poll_interval_s: float = 30.0     # POLL_INTERVAL_S
     n_expiries: int = 3               # N_EXPIRIES: how many of the nearest matched expiries to poll
+    min_expiry_hours: float = 0.0     # MIN_EXPIRY_HOURS: skip expiries closer than this (e.g. hourlies)
     window_pct: float = 0.03          # KALSHI_WINDOW_PCT: full Kalshi depth within this of spot
     gemini_rps: float = 5.0           # GEMINI_RPS
     kalshi_rps: float = 12.0          # KALSHI_RPS
@@ -58,6 +59,7 @@ class Settings:
         return cls(asset=d.asset,
                    poll_interval_s=_env("POLL_INTERVAL_S", d.poll_interval_s),
                    n_expiries=int(_env("N_EXPIRIES", d.n_expiries)),
+                   min_expiry_hours=_env("MIN_EXPIRY_HOURS", d.min_expiry_hours),
                    window_pct=_env("KALSHI_WINDOW_PCT", d.window_pct),
                    gemini_rps=_env("GEMINI_RPS", d.gemini_rps),
                    kalshi_rps=_env("KALSHI_RPS", d.kalshi_rps),
@@ -117,6 +119,8 @@ class State:
         self.deribit_rows: Optional[List[dict]] = None
         self.surface_at: Optional[datetime] = None        # when the surface was last rebuilt
         self.logger = None                                 # a backend.logger.SnapshotLogger, if logging is on
+        self.mode = "live"                                 # "replay" when a backend.replay.Replayer feeds the state
+        self.replay = None                                 # that Replayer, if any
         self.history = QuoteHistory()
         self.sources: Dict[str, SourceStatus] = {s: SourceStatus() for s in SOURCES}
         self.stats: Dict[str, ClientStats] = {s: ClientStats() for s in SOURCES}
@@ -199,7 +203,9 @@ class State:
             row.update(requests=c.requests, http_429=c.http_429, last_error=st.last_error,
                        last_error_at=t(st.last_error_at))
             venues[s] = row
-        return {"status": self.status(), "mode": "live", "poll_interval_s": self.poll_interval_s,
+        return {"status": self.status(), "mode": self.mode,
+                "replay": self.replay.info() if self.replay else None,
+                "poll_interval_s": self.poll_interval_s,
                 "last_poll": t(self.last_poll), "polls": self.polls,
                 "last_poll_duration_s": self.last_poll_duration_s, "loop_errors": self.loop_errors,
                 "venues": venues, "expiries": len(self.expiries),
@@ -207,9 +213,10 @@ class State:
                 "snapshot_log": self.logger.stats() if self.logger else None}
 
 
-def nearest_expiries(matched: Sequence[str], now: datetime, n: int) -> List[str]:
-    """Return the `n` soonest expiry keys that are still in the future."""
-    return [e for e in sorted(matched) if to_utc(e) > now][:n]
+def nearest_expiries(matched: Sequence[str], now: datetime, n: int, min_hours: float = 0.0) -> List[str]:
+    """Return the `n` soonest expiry keys that are more than `min_hours` in the future."""
+    cutoff = now + timedelta(hours=min_hours)
+    return [e for e in sorted(matched) if to_utc(e) > cutoff][:n]
 
 
 def catalog_from_listings(gem_list, kal_list, asset: str = "BTC", now: Optional[datetime] = None) -> tuple:
@@ -297,7 +304,7 @@ class Poller:
         st.match = build_report([b for v in VENUES for b in st.catalog[v]], st.now(), asset,
                                 [i for v in VENUES for i in st.skipped[v]])
         st.matched = st.match.matched
-        targets = nearest_expiries(st.matched, st.now(), s.n_expiries)
+        targets = nearest_expiries(st.matched, st.now(), s.n_expiries, s.min_expiry_hours)
 
         window = (st.spot * (1 - s.window_pct), st.spot * (1 + s.window_pct)) if st.spot else None
         await asyncio.gather(self._gemini_books(gem_list, targets),

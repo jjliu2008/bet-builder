@@ -239,7 +239,7 @@ def test_health_reports_bytes_and_daily_estimate(env):
     assert h["est_mb_per_day"] == pytest.approx(size * 2880 / 1e6, abs=0.06)     # 2880 polls a day at 30 s
     assert h["last_write"] == "2026-11-17T05:12:07Z"
     assert (h["write_errors"], h["dropped"], h["capped"], h["last_error"]) == (0, 0, False, None)
-    assert h["every_n_polls"] == 1 and h["every_n_mode"] == "fixed" and h["max_mb"] == 100.0
+    assert h["every_n_polls"] == 1 and h["every_n_mode"] == "fixed" and h["max_mb"] == 200.0
 
 
 def test_log_every_n_polls(tmp_path):
@@ -254,7 +254,7 @@ def test_log_every_n_polls(tmp_path):
 
 
 def test_auto_mode_thins_logging_to_fit_the_budget(tmp_path):
-    env = Env(tmp_path, max_mb=100.0)                                # every_n_polls=0: automatic
+    env = Env(tmp_path, every_n_polls=0, max_mb=100.0)               # 0 = automatic
     env.poll()
     h = env.state.health()["snapshot_log"]
     every_poll_mb = h["bytes_last_poll"] * 2880 / 1e6
@@ -266,7 +266,7 @@ def test_auto_mode_thins_logging_to_fit_the_budget(tmp_path):
         env.poll(advance_s=INTERVAL)
     assert env.state.health()["snapshot_log"]["polls_logged"] == 3   # polls 1, n+1, 2n+1
 
-    roomy = Env(tmp_path / "roomy", max_mb=10_000.0)
+    roomy = Env(tmp_path / "roomy", every_n_polls=0, max_mb=10_000.0)
     roomy.poll()
     assert roomy.state.health()["snapshot_log"]["every_n_polls"] == 1
 
@@ -455,7 +455,9 @@ def test_settings_from_env(monkeypatch):
     for k in ("LOG_DIR", "LOG_ENABLED", "LOG_EVERY_N_POLLS", "LOG_MAX_MB"):
         monkeypatch.delenv(k, raising=False)
     d = LogSettings.from_env()
-    assert (d.dir, d.enabled, d.every_n_polls, d.max_mb) == ("data/snapshots", True, 0, 100.0)
+    assert (d.dir, d.enabled, d.every_n_polls, d.max_mb) == ("data/snapshots", True, 2, 200.0)
+    monkeypatch.setenv("LOG_EVERY_N_POLLS", "auto")
+    assert LogSettings.from_env().every_n_polls == 0
     monkeypatch.setenv("LOG_DIR", "/tmp/x")
     monkeypatch.setenv("LOG_ENABLED", "0")
     monkeypatch.setenv("LOG_EVERY_N_POLLS", "4")

@@ -5,15 +5,19 @@ Run with:
 
 A background poller (`backend.ingest.poller.Poller`) starts with the app and refreshes the
 shared `State` every POLL_INTERVAL_S. The endpoints only read that state; they never fetch.
+With REPLAY_FILE set, a `backend.replay.Replayer` fills the state from a recorded log instead,
+and no venue is contacted.
 
 Environment:
     ALLOWED_ORIGINS    comma-separated CORS origins. Default "*" (open).
     POLL_INTERVAL_S    seconds between polls. Default 30.
     N_EXPIRIES         nearest matched expiries to poll. Default 3.
+    MIN_EXPIRY_HOURS   skip expiries closer than this many hours. Default 0.
     KALSHI_WINDOW_PCT  full Kalshi depth within this fraction of spot. Default 0.03.
     GEMINI_RPS, KALSHI_RPS, DERIBIT_RPS   requests per second per venue. Defaults 5, 12, 5.
     VENUE_CONCURRENCY  requests in flight per venue. Default 4.
     LOG_DIR, LOG_ENABLED, LOG_EVERY_N_POLLS, LOG_MAX_MB   snapshot log; see backend/logger.py.
+    REPLAY_FILE, REPLAY_DERIBIT_FILE, REPLAY_SPEED        replay mode; see backend/replay.py.
 """
 from __future__ import annotations
 
@@ -32,6 +36,7 @@ from engine.stale import make_stale_fn, stale_flags
 
 from .ingest.poller import Poller, Settings, State
 from .logger import LogSettings, SnapshotLogger
+from .replay import Replayer
 
 SUPPORTED_ASSETS = ("BTC",)
 
@@ -85,34 +90,43 @@ def _fair(state: State, expiry: str, books: List[Book]) -> Optional[dict]:
         return None
 
 
-def create_app(state: Optional[State] = None, poller: Optional[Poller] = None) -> FastAPI:
+def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
+               replayer: Optional[Replayer] = None) -> FastAPI:
     """Build the FastAPI app.
 
-    With no arguments, a live poller is created from the environment and started with the app.
-    Pass `state` alone to serve prepared data with no poller (tests, replay).
+    With no arguments the environment decides: REPLAY_FILE serves a recorded log through a
+    `Replayer`; otherwise a live poller is created. Whichever it is starts with the app.
+    Pass `state` alone to serve prepared data with nothing running in the background (tests).
     """
-    if state is None and poller is None:
-        log_settings = LogSettings.from_env()
-        poller = Poller(settings=Settings.from_env(),
-                        logger=SnapshotLogger(log_settings) if log_settings.enabled else None)
-    state = state or poller.state  # type: ignore[union-attr]
+    if state is None and poller is None and replayer is None:
+        replay_file = os.environ.get("REPLAY_FILE")
+        if replay_file:
+            replayer = Replayer(replay_file, os.environ.get("REPLAY_DERIBIT_FILE") or None,
+                                speed=float(os.environ.get("REPLAY_SPEED") or 1.0))
+        else:
+            log_settings = LogSettings.from_env()
+            poller = Poller(settings=Settings.from_env(),
+                            logger=SnapshotLogger(log_settings) if log_settings.enabled else None)
+    runner = replayer or poller                            # what keeps the state fresh; never both
+    state = state or runner.state  # type: ignore[union-attr]
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
-        task = asyncio.create_task(poller.run()) if poller else None
+        task = asyncio.create_task(runner.run()) if runner else None
         try:
             yield
         finally:
-            if poller and task:
-                poller.stop()
+            if runner and task:
+                runner.stop()
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-                await poller.aclose()
+                await runner.aclose()
 
     app = FastAPI(title="bet-builder", version="0.1.0", lifespan=lifespan)
     app.state.store = state
     app.state.poller = poller
+    app.state.replayer = replayer
     app.add_middleware(CORSMiddleware, allow_origins=_origins(), allow_methods=["*"], allow_headers=["*"])
 
     @app.exception_handler(StrikeNotFound)

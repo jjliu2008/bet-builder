@@ -82,7 +82,7 @@ def test_health_starting_serves_503_for_data():
 def test_health_ok(env):
     h = env.client.get("/health").json()
     assert set(h) == {"status", "mode", "poll_interval_s", "last_poll", "polls", "last_poll_duration_s",
-                      "loop_errors", "venues", "expiries", "match", "snapshot_log"}
+                      "loop_errors", "venues", "expiries", "match", "snapshot_log", "replay"}
     assert h["status"] == "ok" and h["last_poll"] == "2026-11-16T12:00:00Z"
     assert h["polls"] == 1 and h["expiries"] == 1 and h["last_poll_duration_s"] == 1.5
     assert set(h["venues"]) == {"gemini", "kalshi", "deribit"}

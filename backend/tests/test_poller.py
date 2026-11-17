@@ -112,6 +112,14 @@ def test_nearest_expiries_skips_the_past(env):
     keys = [expiry_key(now + timedelta(hours=h)) for h in (-5, -1, 2, 30, 80, 200)]
     assert nearest_expiries(reversed(keys), now, 3) == keys[2:5]
     assert nearest_expiries(keys[:2], now, 3) == []
+    assert nearest_expiries(keys, now, 3, min_hours=2.5) == keys[3:6]        # the one 2 hours out is skipped
+
+
+def test_min_expiry_hours_skips_the_hourly():
+    env = Env(min_expiry_hours=2.0)
+    st = env.poll()
+    assert st.expiries == env.replay.meta["targets"][1:]                  # 06:00 is 48 minutes away
+    assert st.matched == env.replay.meta["targets"]                       # still matched, just not polled
 
 
 # ---- independent failures ----------------------------------------------------------------

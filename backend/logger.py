@@ -12,8 +12,9 @@ Two files per UTC day, both under LOG_DIR (default data/snapshots):
                            surface is identical. `rows_total` is the count before that filter.
 
 Size guard. Only Gemini books and Kalshi books inside the full-depth window are logged. The
-logger measures the bytes each logged poll writes and, unless LOG_EVERY_N_POLLS is set, logs
-every Nth poll with N chosen so a day stays under LOG_MAX_MB. Past that size it stops for the day.
+logger measures the bytes each logged poll writes and reports the size per day. It logs every
+LOG_EVERY_N_POLLS-th poll; in auto mode it picks N so a day stays under LOG_MAX_MB. Past that size
+it stops for the day.
 
 Disk writes happen on a background thread. A write error is logged and counted; it never
 reaches the poll loop.
@@ -21,8 +22,9 @@ reaches the poll loop.
 Environment:
     LOG_DIR             where to write. Default data/snapshots.
     LOG_ENABLED         0 turns logging off. Default 1.
-    LOG_EVERY_N_POLLS   log every Nth poll. Default 0 = choose N from the measured size.
-    LOG_MAX_MB          the daily budget for both files together, in MB. Default 100.
+    LOG_EVERY_N_POLLS   log every Nth poll. Default 2 (once a minute at a 30 s poll). 0 or "auto"
+                        chooses N from the measured size so a day fits in LOG_MAX_MB.
+    LOG_MAX_MB          the daily budget for both files together, in MB. Default 200.
 """
 from __future__ import annotations
 
@@ -53,8 +55,8 @@ _STOP = object()
 class LogSettings:
     dir: str = "data/snapshots"
     enabled: bool = True
-    every_n_polls: int = 0            # 0 = automatic
-    max_mb: float = 100.0
+    every_n_polls: int = 2            # 0 = automatic
+    max_mb: float = 200.0
     warm_s: float = 600.0             # how far back the startup reload goes
 
     @classmethod
@@ -63,8 +65,14 @@ class LogSettings:
         env = os.environ.get
         return cls(dir=env("LOG_DIR") or d.dir,
                    enabled=(env("LOG_ENABLED") or "1").strip().lower() not in ("0", "false", "no", "off"),
-                   every_n_polls=int(env("LOG_EVERY_N_POLLS") or d.every_n_polls),
+                   every_n_polls=_every_n(env("LOG_EVERY_N_POLLS"), d.every_n_polls),
                    max_mb=float(env("LOG_MAX_MB") or d.max_mb))
+
+
+def _every_n(raw: Optional[str], default: int) -> int:
+    if raw is None or raw.strip() == "":
+        return default
+    return 0 if raw.strip().lower() == "auto" else int(raw)
 
 
 def in_window(book: Book, window: Optional[Tuple[float, float]]) -> bool:
