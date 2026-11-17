@@ -1,10 +1,13 @@
-"""Offline tests for backend.app. No network: a fake fetcher serves the engine's fixture books."""
+"""Offline tests for backend.app. The endpoints read a prepared State; nothing is fetched."""
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app import KALSHI_WINDOW_PCT, Store, create_app
+from backend.app import create_app
+from backend.ingest.poller import Poller, Settings, State
+from backend.tests.replay import Replay
 from engine import RouteRequest, build_surface, make_fair_fn, price_route
 from engine.tests.conftest import EXP, EXP_KEY, mk
 from engine.tests.test_fairvalue import deribit_rows, flat
@@ -30,47 +33,23 @@ def kalshi_books():
             mk("kalshi", 70000, bids=[(0.10, 900)], asks=[(0.12, 400)])]
 
 
-class FakeFetcher:
-    """Serves fixture data and counts calls. Set `down` to make a source raise."""
-
-    def __init__(self):
-        self.calls = {"expiries": 0, "spot": 0, "gemini": 0, "kalshi": 0, "deribit": 0}
-        self.down = set()
-        self.windows = []
-
-    def _hit(self, name):
-        self.calls[name] += 1
-        if name in self.down:
-            raise ConnectionError(f"{name} is down")
-
-    def expiries(self, asset):
-        self._hit("expiries")
-        return [EXP_KEY]
-
-    def spot(self, asset):
-        self._hit("spot")
-        return SPOT
-
-    def gemini(self, asset, expiry):
-        self._hit("gemini")
-        return gemini_books()
-
-    def kalshi(self, asset, expiry, window):
-        self._hit("kalshi")
-        self.windows.append(window)
-        return kalshi_books()
-
-    def deribit_rows(self, asset):
-        self._hit("deribit")
-        return deribit_rows(flat(0.5))
-
-
 class Env:
-    def __init__(self, now=NOW):
-        self.fetcher = FakeFetcher()
-        self.t = 0.0
-        self.store = Store(self.fetcher, now=lambda: now, clock=lambda: self.t)
-        self.client = TestClient(create_app(self.store))
+    """A State filled the way one good poll would fill it, and a client reading it."""
+
+    def __init__(self, now=NOW, gemini=True, kalshi=True, deribit=True, polled=True):
+        self.t = now
+        self.state = st = State(now=lambda: self.t)
+        if gemini:
+            st.set_books("gemini", gemini_books())
+        if kalshi:
+            st.set_books("kalshi", kalshi_books())
+        if deribit:
+            st.set_spot(SPOT)
+            st.surface = build_surface(deribit_rows(flat(0.5)), "BTC", NOW)
+            st.mark_ok("deribit")
+        if polled:
+            st.finish_poll([EXP_KEY], duration_s=1.5)
+        self.client = TestClient(create_app(state=st))
 
 
 @pytest.fixture
@@ -87,20 +66,44 @@ def route(env, **body):
 
 
 # ---- /health -----------------------------------------------------------------------------
-def test_health_starting_then_ok(env):
-    h = env.client.get("/health").json()
+def test_health_starting_serves_503_for_data():
+    env = Env(gemini=False, kalshi=False, deribit=False, polled=False)
+    r = env.client.get("/health")
+    assert r.status_code == 200
+    h = r.json()
     assert h["status"] == "starting" and h["mode"] == "live" and h["poll_interval_s"] == 30
-    assert h["last_poll"] is None and h["expiries"] is None and h["snapshot_log"] is None
-    assert set(h["venues"]) == {"gemini", "kalshi", "deribit"}
-    assert h["venues"]["gemini"] == {"ok": None, "last_success": None, "books": 0,
-                                     "requests": 0, "http_429": 0, "error": None}
+    assert h["last_poll"] is None and h["polls"] == 0 and h["snapshot_log"] is None
+    assert h["venues"]["gemini"] == {"ok": None, "last_success": None, "books": 0, "requests": 0,
+                                     "http_429": 0, "last_error": None, "last_error_at": None}
+    for r in (env.client.get("/expiries"), ladder(env), route(env, type="above", lo=68000)):
+        assert r.status_code == 503 and "Starting" in r.json()["detail"]
 
-    assert ladder(env).status_code == 200
+
+def test_health_ok(env):
     h = env.client.get("/health").json()
-    assert h["status"] == "ok" and h["last_poll"] == "2026-11-16T12:00:00Z" and h["expiries"] == 1
+    assert set(h) == {"status", "mode", "poll_interval_s", "last_poll", "polls", "last_poll_duration_s",
+                      "loop_errors", "venues", "expiries", "snapshot_log"}
+    assert h["status"] == "ok" and h["last_poll"] == "2026-11-16T12:00:00Z"
+    assert h["polls"] == 1 and h["expiries"] == 1 and h["last_poll_duration_s"] == 1.5
+    assert set(h["venues"]) == {"gemini", "kalshi", "deribit"}
     assert h["venues"]["gemini"]["books"] == 3 and h["venues"]["kalshi"]["books"] == 3
-    assert all(v["ok"] and v["last_success"] and v["error"] is None for v in h["venues"].values())
     assert "books" not in h["venues"]["deribit"]
+    assert all(v["ok"] and v["last_success"] == "2026-11-16T12:00:00Z" for v in h["venues"].values())
+
+
+def test_health_degraded_after_three_intervals(env):
+    env.t = NOW + timedelta(seconds=90)
+    assert env.client.get("/health").json()["status"] == "ok"
+    env.t = NOW + timedelta(seconds=91)
+    r = env.client.get("/health")
+    assert r.status_code == 200 and r.json()["status"] == "degraded"
+    assert ladder(env).status_code == 200                           # last good data is still served
+
+
+def test_health_degraded_when_a_source_never_answered():
+    env = Env(kalshi=False)
+    h = env.client.get("/health").json()
+    assert h["status"] == "degraded" and h["venues"]["kalshi"]["ok"] is None
 
 
 # ---- /expiries ---------------------------------------------------------------------------
@@ -211,76 +214,68 @@ def test_route_unknown_expiry_is_404(env):
     assert route(env, expiry="2026-12-25T22:00", type="above", lo=68000).status_code == 404
 
 
-# ---- caching and failures ----------------------------------------------------------------
-def test_cache_30s(env):
-    ladder(env)
-    route(env, type="above", lo=68000)
-    env.client.get("/expiries")
-    assert env.fetcher.calls == {"expiries": 1, "spot": 1, "gemini": 1, "kalshi": 1, "deribit": 1}
-    env.t = 29.9
-    ladder(env)
-    assert env.fetcher.calls["gemini"] == 1
-    env.t = 30.1
-    ladder(env)
-    assert env.fetcher.calls == {"expiries": 2, "spot": 2, "gemini": 2, "kalshi": 2, "deribit": 2}
-
-
-def test_kalshi_depth_window_follows_spot(env):
-    ladder(env)
-    assert env.fetcher.windows == [pytest.approx((SPOT * (1 - KALSHI_WINDOW_PCT), SPOT * (1 + KALSHI_WINDOW_PCT)))]
-
-
-def test_one_venue_down_serves_the_other(env):
-    env.fetcher.down = {"gemini"}
+# ---- missing data ------------------------------------------------------------------------
+def test_one_venue_missing_serves_the_other():
+    env = Env(gemini=False)
     rows = ladder(env).json()
     assert [row["strike"] for row in rows] == [66000, 68000, 70000]
     assert all(row["gemini"] is None for row in rows)
-    h = env.client.get("/health").json()
-    assert h["status"] == "degraded"
-    assert h["venues"]["gemini"]["ok"] is False and "gemini is down" in h["venues"]["gemini"]["error"]
-    assert h["venues"]["kalshi"]["ok"] is True
+    assert route(env, type="above", lo=68000).json()["legs"][0]["venue"] == "kalshi"
 
 
-def test_venue_failure_keeps_last_books(env):
-    assert len(ladder(env).json()) == 4
-    env.fetcher.down = {"gemini", "kalshi", "spot", "deribit", "expiries"}
-    env.t = 31
-    r = ladder(env)
-    assert r.status_code == 200 and len(r.json()) == 4
-    assert all(row["fair"] is not None for row in r.json())          # last surface is kept too
-    assert env.client.get("/health").json()["status"] == "degraded"
-
-
-def test_deribit_down_serves_without_fair(env):
-    env.fetcher.down = {"spot", "deribit"}
+def test_no_surface_serves_without_fair():
+    env = Env(deribit=False)
     rows = ladder(env).json()
     assert len(rows) == 4 and all(row["fair"] is None for row in rows)
-    assert env.fetcher.windows == [None]                             # no spot: Kalshi top-of-book only
     got = route(env, type="above", lo=68000).json()
     assert got["fair_value"] is None and got["verdict"] is None
 
 
-def test_everything_down_is_503(env):
-    env.fetcher.down = {"gemini", "kalshi"}
-    assert ladder(env).status_code == 503
-    env = Env()                                                      # nothing cached yet
-    env.fetcher.down = {"expiries"}
-    r = env.client.get("/expiries")
-    assert r.status_code == 503 and "detail" in r.json()
+def test_no_books_for_a_polled_expiry_is_503():
+    env = Env(gemini=False, kalshi=False)
+    r = ladder(env)
+    assert r.status_code == 503 and "No books" in r.json()["detail"]
     assert env.client.get("/health").status_code == 200
+
+
+# ---- poller lifecycle --------------------------------------------------------------------
+def test_poller_starts_with_the_app_and_endpoints_never_fetch():
+    replay = Replay()
+    state = State(now=lambda: replay.now)
+    settings = Settings(poll_interval_s=3600.0, gemini_rps=1e6, kalshi_rps=1e6, deribit_rps=1e6)
+    poller = Poller(state, settings, transport=replay.transport)
+    with TestClient(create_app(poller=poller)) as client:           # entering runs the lifespan
+        deadline = time.monotonic() + 20
+        while client.get("/health").json()["status"] == "starting":
+            assert time.monotonic() < deadline, "the poller never completed a poll"
+            time.sleep(0.02)
+        fetched = sum(replay.hits.values())
+        assert fetched > 0
+
+        targets = replay.meta["targets"]
+        assert client.get("/expiries").json() == targets
+        for e in targets:
+            rows = client.get("/ladder", params={"expiry": e}).json()
+            assert rows and any(row["gemini"] and row["kalshi"] for row in rows)
+        strike = next(row["strike"] for row in rows if row["gemini"] and row["gemini"]["ask"])
+        r = client.post("/route", json={"expiry": targets[-1], "type": "above", "lo": strike, "size": 5})
+        assert r.status_code == 200 and r.json()["fair_value"] is not None
+        assert client.get("/health").json()["status"] == "ok"
+        assert sum(replay.hits.values()) == fetched                 # the endpoints made no requests
+    assert poller._stop.is_set()                                    # leaving stops the poller
 
 
 # ---- CORS --------------------------------------------------------------------------------
 def test_cors_open_by_default(monkeypatch):
     monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
-    c = TestClient(create_app(Store(FakeFetcher())))
+    c = TestClient(create_app(state=State()))
     r = c.get("/health", headers={"Origin": "https://anything.example"})
     assert r.headers["access-control-allow-origin"] == "*"
 
 
 def test_cors_restricted_by_env(monkeypatch):
     monkeypatch.setenv("ALLOWED_ORIGINS", "https://app.example, https://other.example")
-    c = TestClient(create_app(Store(FakeFetcher())))
+    c = TestClient(create_app(state=State()))
     ok = c.get("/health", headers={"Origin": "https://app.example"})
     assert ok.headers["access-control-allow-origin"] == "https://app.example"
     no = c.get("/health", headers={"Origin": "https://evil.example"})
