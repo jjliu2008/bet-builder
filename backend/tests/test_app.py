@@ -386,3 +386,28 @@ def test_verify_detects_tampering():
     rec = c.post("/receipt", json=rt.model_dump(mode="json")).json()
     store[rec["route_id"]]["route"]["total_cost"] = 0.01             # someone edits the stored route
     assert c.get(f"/verify/{rec['route_id']}").json()["status"] == "mismatch"
+
+
+def test_real_chain_without_signer_stays_pending_and_routes_work(env):
+    import chain
+    client = TestClient(create_app(state=env.state, chain=chain))
+    route_body, req = _route_and_request(env)
+    rec = client.post("/receipt", json={"request": req, "route": route_body}).json()
+    assert rec["status"] == "pending" and rec["signature"] is None
+    assert "no signer configured" in rec["error"]
+    assert client.post("/route", json=req).status_code == 200
+
+
+def test_real_chain_with_mocked_rpc(monkeypatch):
+    import chain
+    from solders.keypair import Keypair
+    from chain.tests.fake_rpc import FakeLedger
+    monkeypatch.setenv("SOLANA_KEYPAIR", str(Keypair()))
+    ledger = FakeLedger()
+    chain.set_rpc(ledger)
+    e = Env()
+    client = TestClient(create_app(state=e.state, chain=chain))
+    route_body, req = _route_and_request(e)
+    rec = client.post("/receipt", json={"request": req, "route": route_body}).json()
+    assert rec["status"] == "confirmed" and ledger.txs[rec["signature"]] == f"better:v1:{rec['hash']}"
+    assert client.get(f"/verify/{rec['route_id']}").json()["status"] == "verified"

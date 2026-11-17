@@ -22,6 +22,7 @@ from types import ModuleType
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, HTTPException
+from starlette.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from engine import Route, RouteRequest
@@ -89,7 +90,7 @@ def make_router(chain: Optional[ModuleType] = None, store: Optional[Dict[str, di
             receipt["error"] = "Onchain receipts are not configured on this server"
         else:
             try:
-                res = anchor(h) or {}
+                res = await run_in_threadpool(anchor, h) or {}
                 receipt.update(signature=res.get("signature"), explorer_url=res.get("explorer_url"),
                                status="confirmed" if res.get("signature") else "pending")
             except Exception as e:  # never let a chain failure break the route flow
@@ -120,7 +121,7 @@ def make_router(chain: Optional[ModuleType] = None, store: Optional[Dict[str, di
         if check is None:
             return {**out, "status": "pending", "detail": "Server cannot read the chain to re-verify"}
         try:
-            ok = bool(check(r["signature"], r["hash"]))
+            ok = bool(await run_in_threadpool(check, r["signature"], r["hash"]))
         except Exception as e:
             return {**out, "status": "pending", "detail": f"Chain lookup failed: {type(e).__name__}: {e}"}
         return {**out, "status": "verified" if ok else "mismatch",

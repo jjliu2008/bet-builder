@@ -32,3 +32,10 @@ Thumbs.db
 
 # Snapshot logs
 data/
+
+# Solana keypairs and receipt databases (never commit secrets)
+*keypair*.json
+devnet.json
+id.json
+*.db
+*.db-journal
