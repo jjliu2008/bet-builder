@@ -326,7 +326,8 @@ def replay(records: Sequence[Mapping], config: Optional[StaleConfig] = None,
         A list of ReplayEvent in time order. By default only "raised" and "cleared"
         transitions are included.
     """
-    recs = sorted(records, key=lambda r: to_utc(r["ts"]))
+    # Records without a timestamp can't be placed in time, so they are skipped, like unknown types.
+    recs = sorted((r for r in records if isinstance(r, Mapping) and r.get("ts")), key=lambda r: to_utc(r["ts"]))
     books: Dict[str, Book] = {}
     fair: Dict[tuple, Dict[float, float]] = defaultdict(dict)
     hist = History(max_age_s=10 ** 9)
