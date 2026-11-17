@@ -47,3 +47,9 @@ SOLANA_RPC_URL=https://api.devnet.solana.com                    # devnet or loca
 Use a devnet-only key funded from https://faucet.solana.com. Without a key, receipts stay "pending".
 
 Set `RECEIPTS_DB=./receipts.db` to keep receipts in SQLite so `/verify` links survive restarts (default: in memory).
+
+### Deploying on Render
+
+`render.yaml` describes the service. Start command: `uvicorn backend.app:app --host 0.0.0.0 --port $PORT`.
+Set `SOLANA_KEYPAIR` (devnet-only key, JSON array) as a secret in the dashboard. The free plan sleeps when idle
+and has no persistent disk, so receipts there reset on restart; a paid plan with a disk keeps them.
