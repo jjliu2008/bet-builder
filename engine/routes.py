@@ -427,6 +427,10 @@ def price_route(request: RouteRequest, books: Sequence[Book],
                 single.append(p)
                 priced.append(p)
     best_single = min((p.effective for p in single), default=None)
+    # On a tie (within $1e-6/contract), prefer the single-venue build: same cost, no mixed-index risk.
+    if best_single is not None and len(best.venues) > 1 and best_single <= best.effective + 1e-6:
+        best = min((p for p in single if p.effective <= best_single + 1e-9),
+                   key=lambda p: (len(p.fills), p.effective))
 
     alts, seen = [], set()
     for p in sorted(priced, key=lambda p: p.effective):

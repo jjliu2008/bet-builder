@@ -182,3 +182,14 @@ def test_fair_hidden_close_to_expiry():
     assert rows[0]["fair"] is None
     rows = build_ladder(books, "BTC", EXP_KEY, fair={68000: 0.2}, now=EXP - timedelta(hours=3))
     assert rows[0]["fair"] == 0.2
+
+
+def test_tie_prefers_single_venue():
+    # YES 66000 and NO 68000 cost the same on both venues: a mixed build is no cheaper.
+    books = [
+        mk("gemini", 66000, asks=[(0.60, 500)]), mk("kalshi", 66000, asks=[(0.60, 500)]),
+        mk("gemini", 68000, bids=[(0.30, 500)]), mk("kalshi", 68000, bids=[(0.30, 500)]),
+    ]
+    r = price_route(req(type="between", lo=66000, hi=68000, size=1), books)
+    assert r.mixed_settlement_index is False and len({l.venue for l in r.legs}) == 1
+    assert r.savings == pytest.approx(0)
