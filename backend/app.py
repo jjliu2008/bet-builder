@@ -13,6 +13,7 @@ Environment:
     KALSHI_WINDOW_PCT  full Kalshi depth within this fraction of spot. Default 0.03.
     GEMINI_RPS, KALSHI_RPS, DERIBIT_RPS   requests per second per venue. Defaults 5, 12, 5.
     VENUE_CONCURRENCY  requests in flight per venue. Default 4.
+    LOG_DIR, LOG_ENABLED, LOG_EVERY_N_POLLS, LOG_MAX_MB   snapshot log; see backend/logger.py.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ from engine import (Book, Route, RouteError, RouteRequest, StrikeNotFound, build
 from engine.stale import make_stale_fn, stale_flags
 
 from .ingest.poller import Poller, Settings, State
+from .logger import LogSettings, SnapshotLogger
 
 SUPPORTED_ASSETS = ("BTC",)
 
@@ -90,7 +92,9 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None) -
     Pass `state` alone to serve prepared data with no poller (tests, replay).
     """
     if state is None and poller is None:
-        poller = Poller(settings=Settings.from_env())
+        log_settings = LogSettings.from_env()
+        poller = Poller(settings=Settings.from_env(),
+                        logger=SnapshotLogger(log_settings) if log_settings.enabled else None)
     state = state or poller.state  # type: ignore[union-attr]
 
     @contextlib.asynccontextmanager

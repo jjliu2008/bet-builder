@@ -29,3 +29,6 @@ Thumbs.db
 .vscode/
 .idea/
 .env
+
+# Snapshot logs
+data/

@@ -98,6 +98,7 @@ class State:
         surface: the fitted Deribit surface, or None.
         history: quote mids by contract id and spot under "spot:<ASSET>", for the stale detector.
         polls: completed poll cycles. 0 means "starting".
+        logger: the snapshot logger, or None. /health reports its stats as `snapshot_log`.
     """
 
     def __init__(self, asset: str = "BTC", poll_interval_s: float = 30.0,
@@ -114,6 +115,8 @@ class State:
         self.spot: Optional[float] = None
         self.surface: Optional[Surface] = None
         self.deribit_rows: Optional[List[dict]] = None
+        self.surface_at: Optional[datetime] = None        # when the surface was last rebuilt
+        self.logger = None                                 # a backend.logger.SnapshotLogger, if logging is on
         self.history = QuoteHistory()
         self.sources: Dict[str, SourceStatus] = {s: SourceStatus() for s in SOURCES}
         self.stats: Dict[str, ClientStats] = {s: ClientStats() for s in SOURCES}
@@ -200,7 +203,8 @@ class State:
                 "last_poll": t(self.last_poll), "polls": self.polls,
                 "last_poll_duration_s": self.last_poll_duration_s, "loop_errors": self.loop_errors,
                 "venues": venues, "expiries": len(self.expiries),
-                "match": self.match.summary() if self.match else None, "snapshot_log": None}
+                "match": self.match.summary() if self.match else None,
+                "snapshot_log": self.logger.stats() if self.logger else None}
 
 
 def nearest_expiries(matched: Sequence[str], now: datetime, n: int) -> List[str]:
@@ -255,7 +259,8 @@ class Poller:
 
     def __init__(self, state: Optional[State] = None, settings: Optional[Settings] = None,
                  transport: Optional[httpx.AsyncBaseTransport] = None,
-                 sleep: Callable = asyncio.sleep, clock: Callable[[], float] = time.monotonic):
+                 sleep: Callable = asyncio.sleep, clock: Callable[[], float] = time.monotonic,
+                 logger=None):
         self.settings = s = settings or Settings()
         self.state = state or State(s.asset, s.poll_interval_s)
         self.state.poll_interval_s = s.poll_interval_s
@@ -268,6 +273,9 @@ class Poller:
             self.state.stats[name] = c.stats
         self._clock = clock
         self._stop = asyncio.Event()
+        self.logger = self.state.logger = logger
+        if logger is not None:
+            logger.poll_interval_s, logger.window_pct = s.poll_interval_s, s.window_pct
 
     # -- one cycle
     async def poll_once(self) -> None:
@@ -295,6 +303,8 @@ class Poller:
         await asyncio.gather(self._gemini_books(gem_list, targets),
                              self._kalshi_books(kal_list, targets, window))
         st.finish_poll(targets, st.now(), round(self._clock() - t0, 3))
+        if self.logger is not None:
+            self.logger.on_poll(st)                          # queues the write; never blocks or raises
 
     async def _guard(self, source: str, coro):
         try:
@@ -313,7 +323,7 @@ class Poller:
         if not isinstance(rows, Exception):
             try:    # the SVI fit is CPU work, so it runs off the event loop
                 st.surface = await asyncio.to_thread(build_surface, rows, asset, st.now())
-                st.deribit_rows = rows
+                st.deribit_rows, st.surface_at = rows, st.now()
             except Exception as e:
                 errors.append(e)
         if errors:
@@ -370,6 +380,8 @@ class Poller:
     # -- loop
     async def run(self) -> None:
         """Poll until `stop()` is called. An unexpected error is logged and counted, never raised."""
+        if self.logger is not None:                          # warm the stale detector's history from the log
+            self.logger.warm(self.state)
         while not self._stop.is_set():
             t0 = self._clock()
             try:
@@ -389,3 +401,5 @@ class Poller:
     async def aclose(self) -> None:
         for c in self.clients.values():
             await c.aclose()
+        if self.logger is not None:
+            await asyncio.to_thread(self.logger.close)
