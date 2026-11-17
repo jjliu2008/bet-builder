@@ -153,9 +153,9 @@ def test_two_hour_fair_cutoff_uses_the_virtual_clock(rp, rec):
     assert near and all(row["fair"] is None for row in near)
     assert far and all(row["fair"] is not None for row in far)
     r = c.post("/route", json=rec["bodies"]["near_expiry"]).json()
-    assert r["fair_value"] is None and r["verdict"] == "n/a (too close to expiry)"
+    assert r["fair_value"] is None and r["verdict_code"] == "unavailable"
     r = c.post("/route", json=rec["bodies"]["above"]).json()
-    assert r["fair_value"] is not None and r["verdict"] in ("good deal", "fair", "overpriced")
+    assert r["fair_value"] is not None and r["verdict_code"] in ("options_higher", "in_line", "options_lower")
 
 
 def test_stale_rules_see_recorded_history_on_the_virtual_clock(rp, rec):
@@ -239,7 +239,8 @@ def test_surface_is_rebuilt_from_the_deribit_file(rp, rec):
     assert got and all(got[k] == live[k] for k in got)               # the same fair values the live API gave
     r = client(rp).post("/route", json=rec["bodies"]["between"]).json()
     assert r["fair_value"] == pytest.approx(rec["routes"]["between"]["fair_value"], abs=1e-9)
-    assert r["verdict"] == rec["routes"]["between"]["verdict"]
+    assert r["verdict_code"] == rec["routes"]["between"]["verdict_code"]
+    assert r["verdict_text"] == rec["routes"]["between"]["verdict_text"]
     first_surface = rp.state.surface
     rp.step()
     assert rp.state.surface is not first_surface and rp.state.surface_at == rec["t0"] + timedelta(seconds=INTERVAL)
@@ -256,7 +257,7 @@ def test_without_a_deribit_file_fair_is_null(rec):
     rows = c.get("/ladder", params={"expiry": rec["expiries"][1]}).json()
     assert rows and all(row["fair"] is None for row in rows)
     r = c.post("/route", json=rec["bodies"]["above"]).json()
-    assert r["fair_value"] is None and r["verdict"] is None and r["total_cost"] == rec["routes"]["above"]["total_cost"]
+    assert r["fair_value"] is None and r["verdict_code"] == "unavailable" and r["total_cost"] == rec["routes"]["above"]["total_cost"]
 
 
 # ---- live and replay return the same shapes ----------------------------------------------
@@ -292,7 +293,8 @@ def test_route_has_the_same_shape_and_values_in_live_and_replay(rp, rec):
         assert r.status_code == 200, name
         got, want = r.json(), rec["routes"][name]
         assert shape(got) == shape(want), name
-        for k in ("legs", "total_cost", "best_single_venue_cost", "savings", "verdict", "mixed_settlement_index",
+        for k in ("legs", "total_cost", "best_single_venue_cost", "savings", "verdict_code", "verdict_text",
+                  "fair_note", "mixed_settlement_index",
                   "build", "cash_outlay", "filled_size", "timestamp", "stale_warnings"):
             assert got[k] == want[k], (name, k)
         assert got["fair_value"] == (pytest.approx(want["fair_value"], abs=1e-9) if want["fair_value"] is not None else None)
@@ -373,5 +375,5 @@ def test_demo_fixture_serves_fair_values_and_verdicts():
             assert r.status_code == 200
             got = r.json()
             assert 0 < got["total_cost"] < 1 and 0 < got["fair_value"] < 1
-            assert got["verdict"] in ("good deal", "fair", "overpriced")
+            assert got["verdict_code"] in ("options_higher", "in_line", "options_lower") and got["verdict_text"].startswith("Options market prices")
         rp.step()

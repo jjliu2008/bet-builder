@@ -17,7 +17,7 @@ SPOT = 65000.0
 LADDER_KEYS = {"strike", "gemini", "kalshi", "fair", "stale", "stale_reasons"}
 QUOTE_KEYS = {"bid", "ask", "bid_size", "ask_size", "updated"}
 ROUTE_KEYS = {"legs", "total_cost", "max_payout", "best_single_venue_cost", "savings", "fair_value",
-              "verdict", "stale_warnings", "mixed_settlement_index", "timestamp"}
+              "verdict_code", "verdict_text", "fair_note", "stale_warnings", "mixed_settlement_index", "timestamp"}
 LEG_KEYS = {"venue", "contract", "side", "price", "fee", "size_available", "link"}
 
 
@@ -180,7 +180,8 @@ def test_route_above_matches_engine(env):
     assert got["total_cost"] == pytest.approx(want.total_cost)
     assert got["best_single_venue_cost"] == pytest.approx(want.best_single_venue_cost)
     assert got["fair_value"] == pytest.approx(want.fair_value)
-    assert got["verdict"] == want.verdict and got["verdict"] in ("good deal", "fair", "overpriced")
+    assert got["verdict_code"] == want.verdict_code and got["verdict_code"] in ("options_higher", "in_line", "options_lower")
+    assert got["verdict_text"] == want.verdict_text and "crash protection" in got["fair_note"]
     assert got["max_payout"] == 1.0 and got["build"] == "single"
 
 
@@ -201,7 +202,8 @@ def test_route_size_defaults_to_one(env):
 def test_route_verdict_na_near_expiry():
     env = Env(now=EXP - timedelta(hours=1))
     got = route(env, type="above", lo=68000).json()
-    assert got["fair_value"] is None and got["verdict"] == "n/a (too close to expiry)"
+    assert got["fair_value"] is None and got["verdict_code"] == "unavailable" and got["fair_note"] is None
+    assert "2 hours" in got["verdict_text"]
 
 
 def test_route_strike_not_found_is_422_with_nearest(env):
@@ -237,7 +239,8 @@ def test_no_surface_serves_without_fair():
     rows = ladder(env).json()
     assert len(rows) == 4 and all(row["fair"] is None for row in rows)
     got = route(env, type="above", lo=68000).json()
-    assert got["fair_value"] is None and got["verdict"] is None
+    assert got["fair_value"] is None and got["verdict_code"] == "unavailable"
+    assert got["verdict_text"] == "Options fair value unavailable"
 
 
 def test_no_books_for_a_polled_expiry_is_503():

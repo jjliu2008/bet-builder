@@ -7,7 +7,7 @@ Typical use from the API layer:
 """
 from .books import Book, Fill, Level, cost_to_buy, expiry_key
 from .fairvalue import (Surface, build_surface, fair_above, fair_below, fair_for_request,
-                        fair_range, get_surface, make_fair_fn, verdict)
+                        fair_range, get_surface, make_fair_fn, verdict, FAIR_NOTE)
 from .fees import order_fee, taker_fee
 from .routes import (Leg, Route, RouteConfig, RouteError, RouteRequest, StrikeNotFound,
                      build_ladder, price_route, tile_buckets)
@@ -17,5 +17,5 @@ __all__ = [
     "Leg", "Route", "RouteConfig", "RouteError", "RouteRequest", "StrikeNotFound",
     "build_ladder", "price_route", "tile_buckets",
     "Surface", "build_surface", "fair_above", "fair_below", "fair_for_request", "fair_range",
-    "get_surface", "make_fair_fn", "verdict",
+    "get_surface", "make_fair_fn", "verdict", "FAIR_NOTE",
 ]

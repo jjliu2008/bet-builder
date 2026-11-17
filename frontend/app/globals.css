@@ -59,6 +59,7 @@ body {
   .pill-good { color: var(--good); border-color: var(--good); }
   .pill-bad { color: var(--bad); border-color: var(--bad); }
   .pill-warn { color: var(--warn); border-color: var(--warn); }
+  .pill-accent { color: var(--accent); border-color: var(--accent); }
   .link { @apply text-accent underline-offset-2 hover:underline; }
   .leg { @apply rounded-lg border border-line p-3; }
   .note { @apply rounded-lg border px-3 py-2 text-sm; }

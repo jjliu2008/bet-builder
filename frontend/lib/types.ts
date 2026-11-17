@@ -2,6 +2,7 @@
 
 export type BetType = "above" | "below" | "between";
 export type Side = "YES" | "NO";
+export type VerdictCode = "options_higher" | "in_line" | "options_lower" | "unavailable";
 
 export interface RouteRequest {
   asset: string;
@@ -42,7 +43,12 @@ export interface Route {
   best_single_venue_cost: number | null;
   savings: number | null;
   fair_value: number | null;
-  verdict: string | null;
+  /** Where the options market prices this outcome relative to our cost. */
+  verdict_code: VerdictCode;
+  /** One-line explanation, e.g. "Options market prices this 6¢ higher than the best venue price". */
+  verdict_text: string;
+  /** Caveat about options-implied odds; null when there is no comparison. */
+  fair_note: string | null;
   stale_warnings: string[];
   mixed_settlement_index: boolean;
   timestamp: string;

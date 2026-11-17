@@ -98,9 +98,17 @@ def test_cache_refits_after_ttl():
     fv.clear_cache()
 
 
-def test_verdict_thresholds():
-    assert fv.verdict(0.25, 0.27) == "good deal"
-    assert fv.verdict(0.26, 0.27) == "fair"
-    assert fv.verdict(0.29, 0.27) == "overpriced"
-    assert fv.verdict(0.28, 0.27, over_threshold=0.01) == "overpriced"
-    assert fv.verdict(None, 0.27) is None
+def test_verdict_neutral_labels():
+    v = fv.verdict(0.25, 0.31)
+    assert v == {"verdict_code": "options_higher", "fair_note": fv.FAIR_NOTE,
+                 "verdict_text": "Options market prices this 6¢ higher than the best venue price"}
+    assert fv.verdict(0.26, 0.27)["verdict_code"] == "in_line"
+    assert fv.verdict(0.26, 0.27)["verdict_text"] == "Options market prices this within 2¢ of the best venue price"
+    lower = fv.verdict(0.295, 0.27)
+    assert lower["verdict_code"] == "options_lower" and "2.5¢ lower" in lower["verdict_text"]
+    assert fv.verdict(0.28, 0.27, lower_threshold=0.01)["verdict_code"] == "options_lower"
+    assert fv.verdict(0.25, 0.27)["verdict_code"] == "options_higher"          # exactly 2¢ counts
+    na = fv.verdict(None, 0.27)
+    assert na["verdict_code"] == "unavailable" and na["fair_note"] is None
+    assert "2 hours" in fv.verdict(0.2, 0.3, too_close=True)["verdict_text"]
+    assert all(set(fv.verdict(c, 0.3)) == {"verdict_code", "verdict_text", "fair_note"} for c in (0.1, 0.3, 0.5))

@@ -11,6 +11,12 @@ Expiries use minute precision, for example `2026-11-20T22:00`.
 
 This section describes the fields as currently served by `integration` / `master`.
 
+- **2026-11-17: neutral verdict labels.**
+  - `/route` no longer returns `verdict` (`"good deal"` / `"fair"` / `"overpriced"` / `"n/a (too close to expiry)"`). It returns three fields instead:
+    - `verdict_code`: `"options_higher"` | `"in_line"` | `"options_lower"` | `"unavailable"`
+    - `verdict_text`: one line, e.g. `"Options market prices this 6¢ higher than the best venue price"`
+    - `fair_note`: a caveat string, or null when there is no comparison
+  - Old-to-new mapping: good deal → `options_higher`, fair → `in_line`, overpriced → `options_lower`, n/a or null → `unavailable`.
 - **2026-11-17: persistent onchain receipts.**
   - Receipts are anchored on Solana devnet (Memo program) when a signer is configured, and stored in SQLite or Postgres, so they survive restarts.
   - Added `POST /verify` {request, route, signature} for verifying without the server's database, and `GET /anchors` for hourly snapshot Merkle roots.
@@ -21,15 +27,15 @@ This section describes the fields as currently served by `integration` / `master
   - Added `GET /health`.
   - CORS origins come from the backend's `ALLOWED_ORIGINS`.
 - **2026-11-16: near-expiry cutoff.**
-  - Under 2 hours to expiry, `/route` returns `fair_value: null` and `verdict: "n/a (too close to expiry)"`, and `/ladder` rows return `fair: null`.
+  - Under 2 hours to expiry, `/route` returns `fair_value: null` and `verdict_code: "unavailable"`, and `/ladder` rows return `fair: null`.
   - The snapshot log format was added for the logger and replay.
-- **Current `verdict` values:**
-  - `"good deal"` | `"fair"` | `"overpriced"`, with a ±2¢ band around `fair_value`
-  - `"n/a (too close to expiry)"`
-  - `null` when no fair value is available
-  - Neutral labels (`verdict_code` / `verdict_text` / `fair_note`) are **not** implemented yet.
+- **Current verdict fields:**
+  - `verdict_code` is `"options_higher"` when `fair_value` ≥ `total_cost` + 2¢, `"options_lower"` when `fair_value` ≤ `total_cost` − 2¢, and `"in_line"` otherwise.
+  - It is `"unavailable"` under 2 hours to expiry or when no fair value is available.
+  - `verdict_text` explains the code in one line.
+  - `fair_note` is set whenever a comparison was made.
 - **`/route` fields:**
-  - Contract fields: `legs[]` {`venue`, `contract`, `side`, `price`, `fee`, `size_available`, `link`}, `total_cost`, `max_payout`, `best_single_venue_cost`, `savings`, `fair_value`, `verdict`, `stale_warnings`, `mixed_settlement_index`, `timestamp`.
+  - Contract fields: `legs[]` {`venue`, `contract`, `side`, `price`, `fee`, `size_available`, `link`}, `total_cost`, `max_payout`, `best_single_venue_cost`, `savings`, `fair_value`, `verdict_code`, `verdict_text`, `fair_note`, `stale_warnings`, `mixed_settlement_index`, `timestamp`.
   - Engine additions: `legs[]` {`size`, `fee_total`, `strike_lo`, `strike_hi`}, `build`, `cash_outlay`, `guaranteed_payout`, `size`, `filled_size`, `alternatives[]` {`build`, `venues`, `total_cost`, `cash_outlay`, `filled_size`, `complete`}, `warnings`.
 - **`/ladder` row fields:**
   - `strike`
@@ -92,7 +98,10 @@ Response (`engine.Route`):
 ```json
 { "legs": [{"venue":"gemini","contract":"GEMI-...","side":"YES","price":0.24,"fee":0.0128,"size_available":250,"link":"..."}],
   "total_cost": 0.31, "max_payout": 1.0, "best_single_venue_cost": 0.36, "savings": 0.05,
-  "fair_value": 0.27, "verdict": "overpriced", "stale_warnings": [], "mixed_settlement_index": true, "timestamp": "ISO" }
+  "fair_value": 0.27, "verdict_code": "options_lower",
+  "verdict_text": "Options market prices this 4¢ lower than the best venue price",
+  "fair_note": "Options prices include a premium for crash protection, so treat this as a reference, not the true odds.",
+  "stale_warnings": [], "mixed_settlement_index": true, "timestamp": "ISO" }
 ```
 
 Field semantics:
@@ -106,8 +115,15 @@ Field semantics:
 - `best_single_venue_cost`: the cheapest effective cost using only one venue. It is `null` if no single venue can fill the order.
 - `savings`: `best_single_venue_cost - total_cost`. It is `null` when the former is null.
 - `fair_value`: the Deribit-implied probability of the outcome. It is `null` if fair value is unavailable.
-- `verdict`: `"good deal"`, `"fair"`, `"overpriced"`, `"n/a (too close to expiry)"`, or `null` (no fair value available). The default band is ±2¢ of `fair_value`.
-- **Near-expiry cutoff:** under 2 hours to expiry (`RouteConfig.min_fair_hours`), `fair_value` is `null` and `verdict` is `"n/a (too close to expiry)"`. In `/ladder`, every row's `fair` is `null` in the same window.
+- `verdict_code`: where the options market prices the outcome relative to our cost. The band is 2¢, configurable via `RouteConfig.higher_threshold` / `lower_threshold`.
+  - `"options_higher"`: `fair_value` ≥ `total_cost` + 2¢.
+  - `"in_line"`: `fair_value` is within 2¢ of `total_cost`.
+  - `"options_lower"`: `fair_value` ≤ `total_cost` − 2¢.
+  - `"unavailable"`: there is no fair value, or the expiry is too close.
+  - The label is deliberately neutral. It doesn't say the venue price is "good" or "bad", because options-implied odds include a crash-protection premium.
+- `verdict_text`: a one-line explanation of `verdict_code`, e.g. `"Options market prices this 6¢ higher than the best venue price"`.
+- `fair_note`: a caveat string shown with any comparison, or `null` when `verdict_code` is `"unavailable"`.
+- **Near-expiry cutoff:** under 2 hours to expiry (`RouteConfig.min_fair_hours`), `fair_value` is `null`, `verdict_code` is `"unavailable"`, and `fair_note` is `null`. In `/ladder`, every row's `fair` is `null` in the same window.
 - `mixed_settlement_index`: true when the legs settle on different venues' indexes. Gemini uses its own index; Kalshi uses CF Benchmarks BRTI, 60-second average.
 
 Engine additions, which are optional:

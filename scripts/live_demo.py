@@ -38,10 +38,8 @@ def show_route(label, req, books, **kw):
         print(f"   {l.venue:7s} {l.side:3s} {l.contract:34s} x{l.size:<7g} @ {l.price:.4f}  fee/ct {l.fee:.4f}  depth {l.size_available:g}")
     print(f"   build={r.build}  cash/ct={r.cash_outlay:.4f}  effective/ct={r.total_cost:.4f}  "
           f"best single venue={r.best_single_venue_cost}  savings={r.savings}  mixed_index={r.mixed_settlement_index}")
-    if r.fair_value is not None:
-        print(f"   fair={r.fair_value:.4f}  verdict={r.verdict}")
-    elif r.verdict:
-        print(f"   fair=null  verdict={r.verdict}")
+    fair = "null" if r.fair_value is None else f"{r.fair_value:.4f}"
+    print(f"   fair={fair}  verdict={r.verdict_code}: {r.verdict_text}")
     for w in r.warnings + r.stale_warnings:
         print("   !", w)
     alts = ", ".join(f"{a.build}[{'+'.join(a.venues)}]={a.total_cost:.4f}" for a in r.alternatives)
@@ -138,7 +136,7 @@ def main():
     print(f"Deribit surface: {len(surface.slices)} expiries, first {surface.slices[0].expiry:%Y-%m-%d %H:%M}Z")
     fair = fair_table(books, expiry, surface, spot)
     if fair_hidden(expiry):
-        print("(under 2h to expiry: the API hides these fair values and the routes show verdict n/a)")
+        print("(under 2h to expiry: the API hides these fair values and verdict_code is unavailable)")
     fair_fn = make_fair_fn(surface)
 
     hist = history.as_mapping()

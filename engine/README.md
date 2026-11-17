@@ -9,7 +9,7 @@ This is the pricing core of bet-builder. It is a pure Python package that the Fa
 | `fees.py` | Taker fee per order, rounded up to the cent (with a flag to disable rounding). |
 | `books.py` | `Level`, `Book` (normalized YES book with outcome bounds [lo, hi)), and `cost_to_buy` (walks the levels). |
 | `routes.py` | `RouteRequest`, then `price_route`, then `Route`. Also `build_ladder` for GET /ladder. |
-| `fairvalue.py` | Deribit to SVI per expiry, interpolated in time, giving `fair_above` / `fair_below` / `fair_range`, and `verdict`. |
+| `fairvalue.py` | Deribit to SVI per expiry, interpolated in time, giving `fair_above` / `fair_below` / `fair_range`, and `verdict` (neutral labels). |
 | `stale.py` | `stale_flags` / `make_stale_fn` (rule-based, with reasons) and the `History` store. |
 | `dev_fetch.py` | Public Gemini, Kalshi, and Deribit fetchers plus expiry matching. These are for tests and the demo only; the production ingest is in backend/. |
 
@@ -99,14 +99,18 @@ Each book holds YES bids and asks. **Buying NO costs 1 − YES bid** and fills a
    - range [a, b) = above(a) − above(b)
 8. The fitted surface is cached for 60 s.
 
-`verdict`:
-- **"good deal"** if cost ≤ fair − 2¢
-- **"overpriced"** if cost ≥ fair + 2¢
-- **"fair"** otherwise
+`verdict(cost, fair)` returns three fields. The language is neutral on purpose: options-implied odds carry a crash-protection premium, so they are a reference, not the true odds.
+- `verdict_code`:
+  - **`options_higher`** if fair ≥ cost + 2¢
+  - **`options_lower`** if fair ≤ cost − 2¢
+  - **`in_line`** otherwise
+  - **`unavailable`** with no fair value or near expiry
+- `verdict_text`: for example, "Options market prices this 6¢ higher than the best venue price".
+- `fair_note`: the caveat itself, set whenever a comparison is made.
 
-Both thresholds are configurable.
+Both thresholds are configurable (`RouteConfig.higher_threshold` and `lower_threshold`).
 
-**Near-expiry cutoff.** Under 2 hours to expiry (`RouteConfig.min_fair_hours`), routes return `fair_value = null` and `verdict = "n/a (too close to expiry)"`, and ladder `fair` is null. In that window the Deribit surface says little about the venues' settlement averaging and index basis.
+**Near-expiry cutoff.** Under 2 hours to expiry (`RouteConfig.min_fair_hours`), routes return `fair_value = null` and `verdict_code = "unavailable"`, and ladder `fair` is null. In that window the Deribit surface says little about the venues' settlement averaging and index basis.
 
 **Diagnostic.** `scripts/diagnose_fair.py --expiry <key>` compares our SVI digitals with model-free Deribit call spreads, (C(K1) − C(K2)) / (K2 − K1) using marks in $, and with the venue mids.
 - On 2026-11-16, for the Nov 17 22:00 expiry, SVI matched the call spreads within 0.8¢ on average.

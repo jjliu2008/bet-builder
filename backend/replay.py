@@ -10,7 +10,7 @@ The clock is virtual. `state.now()` returns the current snapshot's `ts`, so expi
 Environment:
     REPLAY_FILE           the snapshot log to serve. Setting it turns replay mode on.
     REPLAY_DERIBIT_FILE   the Deribit rows file, to rebuild the fair-value surface. Without it,
-                          fair values and verdicts are null.
+                          fair values are null and verdict_code is "unavailable".
     REPLAY_SPEED          playback speed. Default 1 (real time); 10 plays ten times faster.
 """
 from __future__ import annotations

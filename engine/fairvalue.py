@@ -40,7 +40,11 @@ _MONTHS = {m: i + 1 for i, m in enumerate(
 
 # ---- verdict -----------------------------------------------------------------------------
 MIN_FAIR_HOURS = 2.0
-TOO_CLOSE_VERDICT = "n/a (too close to expiry)"
+OPTIONS_HIGHER_THRESHOLD = 0.02
+OPTIONS_LOWER_THRESHOLD = 0.02
+FAIR_NOTE = ("Options prices include a premium for crash protection, so treat this as a reference, "
+             "not the true odds.")
+VERDICT_CODES = ("options_higher", "in_line", "options_lower", "unavailable")
 
 
 def fair_hidden(expiry: datetime | str, now: Optional[datetime] = None,
@@ -63,30 +67,48 @@ def fair_hidden(expiry: datetime | str, now: Optional[datetime] = None,
     return (to_utc(expiry) - now).total_seconds() < min_hours * 3600.0
 
 
+def _cents(x: float) -> str:
+    c = round(abs(x) * 100, 1)
+    return f"{c:g}¢"
+
+
 def verdict(cost: Optional[float], fair: Optional[float],
-            good_threshold: float = GOOD_DEAL_THRESHOLD,
-            over_threshold: float = OVERPRICED_THRESHOLD) -> Optional[str]:
-    """Label a cost against fair value.
+            higher_threshold: float = OPTIONS_HIGHER_THRESHOLD,
+            lower_threshold: float = OPTIONS_LOWER_THRESHOLD,
+            too_close: bool = False) -> dict:
+    """Compare our cost with the options-implied fair value, in neutral language.
+
+    The comparison says where the options market prices the outcome relative to the venues; it
+    does not claim either one is "right" (options carry a crash-protection premium).
 
     Args:
-        cost: our effective cost in $/contract, including fees.
-        fair: the fair probability, in $/contract.
-        good_threshold: how far below fair, in $, counts as a "good deal" (default 0.02).
-        over_threshold: how far above fair, in $, counts as "overpriced" (default 0.02).
+        cost: our effective cost in $/contract, including fees (the best venue price).
+        fair: the options-implied probability, in $/contract, or None.
+        higher_threshold: how far, in $, fair must sit above cost for "options_higher" (default 0.02).
+        lower_threshold: how far, in $, fair must sit below cost for "options_lower" (default 0.02).
+        too_close: True when fair value is hidden near expiry.
 
     Returns:
-        "good deal" if cost <= fair - good_threshold, "overpriced" if cost >= fair + over_threshold,
-        otherwise "fair". Returns None if either input is None.
+        {"verdict_code": "options_higher" | "in_line" | "options_lower" | "unavailable",
+         "verdict_text": a one-line human explanation,
+         "fair_note": FAIR_NOTE when a comparison was made, else None}.
     """
+    if too_close:
+        return {"verdict_code": "unavailable", "fair_note": None,
+                "verdict_text": f"Options comparison hidden: under {MIN_FAIR_HOURS:g} hours to expiry"}
     if cost is None or fair is None:
-        return None
-    diff = cost - fair
+        return {"verdict_code": "unavailable", "fair_note": None,
+                "verdict_text": "Options fair value unavailable"}
+    diff = fair - cost
     eps = 1e-9
-    if diff <= -good_threshold + eps:
-        return "good deal"
-    if diff >= over_threshold - eps:
-        return "overpriced"
-    return "fair"
+    if diff >= higher_threshold - eps:
+        code, text = "options_higher", f"Options market prices this {_cents(diff)} higher than the best venue price"
+    elif -diff >= lower_threshold - eps:
+        code, text = "options_lower", f"Options market prices this {_cents(diff)} lower than the best venue price"
+    else:
+        band = _cents(max(higher_threshold, lower_threshold))
+        code, text = "in_line", f"Options market prices this within {band} of the best venue price"
+    return {"verdict_code": code, "verdict_text": text, "fair_note": FAIR_NOTE}
 
 
 # ---- SVI + Black -------------------------------------------------------------------------

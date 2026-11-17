@@ -1,4 +1,4 @@
-import type { Route, RouteRequest } from "@/lib/types";
+import type { Route, RouteRequest, VerdictCode } from "@/lib/types";
 import { buildLabel, cents, expiryLabel, num, pct, usd, venueName } from "@/lib/format";
 import Warnings from "./Warnings";
 import SaveVerify from "./SaveVerify";
@@ -10,13 +10,20 @@ function describe(r: RouteRequest): string {
   return `BTC between ${usd(r.lo ?? 0, 0)} and ${usd(r.hi ?? 0, 0)} at ${e}`;
 }
 
+const VERDICT_STYLE: Record<VerdictCode, { cls: string; label: string }> = {
+  options_higher: { cls: "pill-good", label: "Options price it higher" },
+  in_line: { cls: "pill-accent", label: "In line with options" },
+  options_lower: { cls: "pill-warn", label: "Options price it lower" },
+  unavailable: { cls: "", label: "No options comparison" },
+};
+
 function Verdict({ route }: { route: Route }) {
-  const v = route.verdict;
-  if (v?.startsWith("n/a")) return <span className="pill">Fair value n/a (too close to expiry)</span>;
-  if (route.fair_value === null || !v)
-    return <span className="pill">Fair value unavailable</span>;
-  const cls = v === "good deal" ? "pill-good" : v === "overpriced" ? "pill-bad" : "pill-warn";
-  return <span className={`pill ${cls}`}>{v[0].toUpperCase() + v.slice(1)}</span>;
+  const v = VERDICT_STYLE[route.verdict_code] ?? VERDICT_STYLE.unavailable;
+  return (
+    <span className={`pill ${v.cls}`} title={route.verdict_text}>
+      {v.label}
+    </span>
+  );
 }
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -109,6 +116,11 @@ export default function RouteCard({ route, request }: { route: Route; request: R
           value={route.best_single_venue_cost === null ? "n/a" : cents(route.best_single_venue_cost)}
         />
         <Stat label="Quoted at" value={new Date(route.timestamp).toLocaleTimeString()} />
+      </div>
+
+      <div className="space-y-1" aria-label="Options comparison">
+        <p className={`text-sm ${route.verdict_code === "unavailable" ? "muted" : ""}`}>{route.verdict_text}</p>
+        {route.fair_note && <p className="muted text-xs">ⓘ {route.fair_note}</p>}
       </div>
 
       <Warnings route={route} />

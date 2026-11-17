@@ -18,8 +18,8 @@ from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .books import Book, Fill, Side, cost_to_buy, expiry_key, iso
-from .fairvalue import (GOOD_DEAL_THRESHOLD, MIN_FAIR_HOURS, OVERPRICED_THRESHOLD, TOO_CLOSE_VERDICT,
-                        fair_hidden, verdict)
+from .fairvalue import (MIN_FAIR_HOURS, OPTIONS_HIGHER_THRESHOLD, OPTIONS_LOWER_THRESHOLD, fair_hidden,
+                        verdict)
 
 BetType = Literal["above", "below", "between"]
 _EPS = 1e-9
@@ -79,14 +79,14 @@ class RouteConfig(BaseModel):
 
     Attributes:
         round_fees: True rounds each order's fee up to the next cent (venue rule).
-        good_threshold: $ below fair that counts as a "good deal".
-        over_threshold: $ above fair that counts as "overpriced".
+        higher_threshold: $ by which fair must exceed our cost for verdict_code "options_higher".
+        lower_threshold: $ by which fair must sit below our cost for verdict_code "options_lower".
         min_fair_hours: below this many hours to expiry, fair value is hidden (fair_value=None,
-            verdict="n/a (too close to expiry)"). Default 2.
+            verdict_code="unavailable"). Default 2.
     """
     round_fees: bool = True
-    good_threshold: float = GOOD_DEAL_THRESHOLD
-    over_threshold: float = OVERPRICED_THRESHOLD
+    higher_threshold: float = OPTIONS_HIGHER_THRESHOLD
+    lower_threshold: float = OPTIONS_LOWER_THRESHOLD
     min_fair_hours: float = MIN_FAIR_HOURS
 
 
@@ -123,7 +123,9 @@ class Route(BaseModel):
     best_single_venue_cost: Optional[float] = None
     savings: Optional[float] = None
     fair_value: Optional[float] = None
-    verdict: Optional[str] = None
+    verdict_code: Literal["options_higher", "in_line", "options_lower", "unavailable"] = "unavailable"
+    verdict_text: str = "Options fair value unavailable"
+    fair_note: Optional[str] = None
     stale_warnings: List[str] = Field(default_factory=list)
     mixed_settlement_index: bool = False
     timestamp: str
@@ -400,8 +402,10 @@ def price_route(request: RouteRequest, books: Sequence[Book],
         now: the evaluation time, used for the near-expiry cutoff (default: now, UTC).
 
     Returns:
-        A Route. Under `config.min_fair_hours` to expiry, `fair_value` is None and `verdict`
-        is "n/a (too close to expiry)", and fair_fn is not called. Its costs are per contract, in $, including fees. `total_cost` is the effective
+        A Route. Under `config.min_fair_hours` to expiry, `fair_value` is None, `verdict_code`
+        is "unavailable", and fair_fn is not called. Costs are per contract, in $, including
+        fees. `verdict_code` / `verdict_text` / `fair_note` compare `total_cost` with fair value
+        (see fairvalue.verdict). `total_cost` is the effective
         cost, which nets out the guaranteed $1 of a two-leg build. `best_single_venue_cost` is the
         cheapest complete build using only one venue.
 
@@ -465,7 +469,7 @@ def price_route(request: RouteRequest, books: Sequence[Book],
         best_single_venue_cost=None if best_single is None else round(best_single, 6),
         savings=None if best_single is None else round(best_single - best.effective, 6),
         fair_value=None if fair is None else round(fair, 6),
-        verdict=TOO_CLOSE_VERDICT if too_close else verdict(total, fair, cfg.good_threshold, cfg.over_threshold),
+        **verdict(total, fair, cfg.higher_threshold, cfg.lower_threshold, too_close=too_close),
         stale_warnings=stale_warnings,
         mixed_settlement_index=len(best.venues) > 1,
         timestamp=iso(now or datetime.now(timezone.utc)),

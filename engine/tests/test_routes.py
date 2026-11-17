@@ -127,12 +127,14 @@ def test_fair_and_stale_hooks_and_verdict():
     t = EXP - timedelta(days=1)
     r = price_route(req(type="above", lo=68000), books, now=t,
                     fair_fn=lambda rq: 0.20, stale_fn=lambda b: "quote frozen")
-    assert r.fair_value == 0.20 and r.verdict == "overpriced"   # 0.26 vs 0.20
+    assert r.fair_value == 0.20 and r.verdict_code == "options_lower"   # cost 0.26 vs fair 0.20
+    assert r.verdict_text == "Options market prices this 6¢ lower than the best venue price"
+    assert r.fair_note and "crash protection" in r.fair_note
     assert r.stale_warnings and "quote frozen" in r.stale_warnings[0]
     r2 = price_route(req(type="above", lo=68000), books, fair_fn=lambda rq: 0.30, now=t)
-    assert r2.verdict == "good deal"
+    assert r2.verdict_code == "options_higher"
     r3 = price_route(req(type="above", lo=68000), books, fair_fn=lambda rq: 0.25, now=t)
-    assert r3.verdict == "fair"
+    assert r3.verdict_code == "in_line"
 
 
 def test_unrounded_fees_flag():
@@ -174,10 +176,11 @@ def test_fair_hidden_close_to_expiry():
     fair_fn = lambda rq: called.append(1) or 0.20
     near = price_route(req(type="above", lo=68000), books, fair_fn=fair_fn,
                        now=EXP - timedelta(hours=1, minutes=59))
-    assert near.fair_value is None and near.verdict == "n/a (too close to expiry)" and not called
+    assert near.fair_value is None and near.verdict_code == "unavailable" and not called
+    assert "2 hours" in near.verdict_text and near.fair_note is None
     far = price_route(req(type="above", lo=68000), books, fair_fn=fair_fn,
                       now=EXP - timedelta(hours=2, minutes=1))
-    assert far.fair_value == 0.20 and far.verdict == "overpriced"
+    assert far.fair_value == 0.20 and far.verdict_code == "options_lower"
     rows = build_ladder(books, "BTC", EXP_KEY, fair={68000: 0.2}, now=EXP - timedelta(minutes=30))
     assert rows[0]["fair"] is None
     rows = build_ladder(books, "BTC", EXP_KEY, fair={68000: 0.2}, now=EXP - timedelta(hours=3))
