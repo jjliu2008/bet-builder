@@ -9,3 +9,4 @@ uvicorn
 httpx
 solana
 solders
+psycopg[binary]

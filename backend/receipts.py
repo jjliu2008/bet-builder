@@ -1,7 +1,8 @@
 """Route receipts: POST /receipt and GET /verify/{route_id}.
 
-A receipt is a SHA-256 fingerprint of the canonical JSON of {request, route}. It is kept in
-memory and, when an onchain module is available, anchored on Solana devnet.
+A receipt is a SHA-256 fingerprint of the canonical JSON of {request, route}. It is kept in the
+receipt store (backend.receipt_store: SQLite or Postgres) and, when the `chain` module has a
+signer, anchored on Solana devnet as a Memo transaction.
 
 The onchain part is optional. The optional `chain` package (repo root) may provide:
     router                                  extra FastAPI routes, mounted by backend.app
@@ -11,7 +12,8 @@ Without it, or if anchoring fails, a receipt is still issued with status "pendin
 hash but no signature or explorer link, so the frontend shows "receipt pending" and the route
 itself is unaffected.
 
-Receipts live in process memory: they are lost on restart.
+POST /verify checks {request, route, signature} straight against the chain, so a route can be
+verified even if this server's database is gone: the proof lives onchain.
 """
 from __future__ import annotations
 
@@ -19,7 +21,8 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from types import ModuleType
-from typing import Any, Dict, Optional
+from collections.abc import MutableMapping
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Body, HTTPException
 from starlette.concurrency import run_in_threadpool
@@ -58,21 +61,68 @@ def _parse_body(body: Any) -> tuple:
     return request, route
 
 
-def make_router(chain: Optional[ModuleType] = None, store: Optional[Dict[str, dict]] = None) -> APIRouter:
+async def try_anchor(receipt: dict, anchor: Optional[Callable[[str], dict]]) -> dict:
+    """Try to anchor `receipt["hash"]` onchain, updating the receipt in place (and returning it).
+
+    The chain call runs in a threadpool so it never blocks the event loop. On success
+    status becomes "confirmed" with signature + explorer_url; on any failure it stays "pending"
+    and `error` says why.
+    """
+    if anchor is None:
+        receipt["error"] = "Onchain receipts are not configured on this server"
+        return receipt
+    try:
+        res = await run_in_threadpool(anchor, receipt["hash"]) or {}
+        receipt.update(signature=res.get("signature"), explorer_url=res.get("explorer_url"),
+                       status="confirmed" if res.get("signature") else "pending",
+                       error=None if res.get("signature") else "Anchor returned no signature")
+    except Exception as e:  # never let a chain failure break the route flow
+        receipt["error"] = f"Anchoring failed: {type(e).__name__}: {e}"
+    return receipt
+
+
+async def retry_pending(store: MutableMapping, chain: Optional[ModuleType]) -> int:
+    """Retry anchoring every stored receipt that is still pending with no signature.
+
+    Runs at startup in the background. Skips quietly if there is no chain module or no signer.
+    Returns the number of receipts that became confirmed.
+    """
+    anchor = getattr(chain, "anchor_hash", None) if chain else None
+    has_signer = getattr(chain, "signer_pubkey", None) if chain else None
+    if anchor is None or (has_signer is not None and has_signer() is None):
+        return 0
+    ids = store.pending_ids() if hasattr(store, "pending_ids") else \
+        [k for k, v in list(store.items()) if v["receipt"]["status"] == "pending" and not v["receipt"]["signature"]]
+    confirmed = 0
+    for route_id in ids:
+        rec = store.get(route_id)
+        if rec is None:
+            continue
+        await try_anchor(rec["receipt"], anchor)
+        store[route_id] = rec
+        confirmed += rec["receipt"]["status"] == "confirmed"
+    return confirmed
+
+
+def make_router(chain: Optional[ModuleType] = None, store: Optional[MutableMapping] = None) -> APIRouter:
     """Build the receipt routes.
 
     Args:
         chain: the optional onchain module (see the module docstring), or None.
-        store: the receipt store, {route_id: record}. A new in-memory dict by default.
+        store: the receipt store, {route_id: record} (e.g. backend.receipt_store.ReceiptStore).
+            A new in-memory dict by default.
     """
     router = APIRouter()
-    receipts: Dict[str, dict] = {} if store is None else store
+    receipts: MutableMapping = {} if store is None else store
     anchor = getattr(chain, "anchor_hash", None) if chain else None
     check = getattr(chain, "verify_hash", None) if chain else None
 
     @router.post("/receipt")
     async def post_receipt(body: Any = Body(...)) -> dict:
         """Fingerprint a route and try to anchor it.
+
+        Posting the same route again returns the stored receipt; if that receipt is still
+        pending, anchoring is retried first.
 
         Returns:
             {route_id, hash, signature, explorer_url, status, created_at, error}. `status` is
@@ -82,21 +132,16 @@ def make_router(chain: Optional[ModuleType] = None, store: Optional[Dict[str, di
         request, route = _parse_body(body)
         h = fingerprint(request, route)
         route_id = h[:24]
-        if route_id in receipts:
-            return receipts[route_id]["receipt"]
-        receipt = {"route_id": route_id, "hash": h, "signature": None, "explorer_url": None,
-                   "status": "pending", "created_at": iso(datetime.now(timezone.utc)), "error": None}
-        if anchor is None:
-            receipt["error"] = "Onchain receipts are not configured on this server"
-        else:
-            try:
-                res = await run_in_threadpool(anchor, h) or {}
-                receipt.update(signature=res.get("signature"), explorer_url=res.get("explorer_url"),
-                               status="confirmed" if res.get("signature") else "pending")
-            except Exception as e:  # never let a chain failure break the route flow
-                receipt["error"] = f"Anchoring failed: {type(e).__name__}: {e}"
-        receipts[route_id] = {"request": request, "route": route, "receipt": receipt}
-        return receipt
+        rec = receipts.get(route_id)
+        if rec is None:
+            rec = {"request": request, "route": route, "receipt": {
+                "route_id": route_id, "hash": h, "signature": None, "explorer_url": None,
+                "status": "pending", "created_at": iso(datetime.now(timezone.utc)), "error": None}}
+        elif rec["receipt"]["status"] == "confirmed":
+            return rec["receipt"]
+        await try_anchor(rec["receipt"], anchor)
+        receipts[route_id] = rec
+        return rec["receipt"]
 
     @router.get("/verify/{route_id}")
     async def verify(route_id: str) -> dict:
@@ -106,11 +151,13 @@ def make_router(chain: Optional[ModuleType] = None, store: Optional[Dict[str, di
             {route_id, status, hash, signature, explorer_url, detail}. `status` is "verified"
             (the stored route hashes to the receipt hash, and the chain confirms it), "mismatch"
             (either check fails), or "pending" (the hash is intact, but nothing is onchain to
-            check against). Returns 404 if the receipt is unknown, e.g. after a restart.
+            check against). Returns 404 if this server has no such receipt; use POST /verify with
+            the route and signature to verify without the server's database.
         """
         rec = receipts.get(route_id)
         if rec is None:
-            raise HTTPException(404, f"No receipt {route_id} on this server (receipts reset on restart)")
+            raise HTTPException(404, f"No receipt {route_id} on this server. "
+                                     "POST /verify with {request, route, signature} to check it onchain.")
         r = rec["receipt"]
         out = {"route_id": route_id, "hash": r["hash"], "signature": r["signature"],
                "explorer_url": r["explorer_url"]}
@@ -118,13 +165,37 @@ def make_router(chain: Optional[ModuleType] = None, store: Optional[Dict[str, di
             return {**out, "status": "mismatch", "detail": "Stored route no longer matches its fingerprint"}
         if not r["signature"]:
             return {**out, "status": "pending", "detail": r.get("error") or "Not anchored onchain yet"}
+        return {**out, **(await _check(r["signature"], r["hash"]))}
+
+    @router.post("/verify")
+    async def verify_body(body: Any = Body(...)) -> dict:
+        """Verify a route against the chain without the server's receipt database.
+
+        Body: {request, route, signature} (request may be null; it must be exactly what was
+        receipted). The fingerprint is recomputed and checked against the memo of transaction
+        `signature`.
+
+        Returns:
+            {route_id, status, hash, signature, explorer_url, detail} with status "verified",
+            "mismatch", or "pending" (the chain could not be read).
+        """
+        if not isinstance(body, dict) or not body.get("signature") or "route" not in body:
+            raise HTTPException(422, "Body must be {request, route, signature}")
+        request, route = _parse_body({"request": body.get("request"), "route": body["route"]})
+        h, sig = fingerprint(request, route), str(body["signature"])
+        explorer = getattr(chain, "explorer_url", None) if chain else None
+        out = {"route_id": h[:24], "hash": h, "signature": sig,
+               "explorer_url": explorer(sig) if explorer else None}
+        return {**out, **(await _check(sig, h))}
+
+    async def _check(sig: str, h: str) -> dict:
         if check is None:
-            return {**out, "status": "pending", "detail": "Server cannot read the chain to re-verify"}
+            return {"status": "pending", "detail": "Server cannot read the chain to verify"}
         try:
-            ok = bool(await run_in_threadpool(check, r["signature"], r["hash"]))
+            ok = bool(await run_in_threadpool(check, sig, h))
         except Exception as e:
-            return {**out, "status": "pending", "detail": f"Chain lookup failed: {type(e).__name__}: {e}"}
-        return {**out, "status": "verified" if ok else "mismatch",
+            return {"status": "pending", "detail": f"Chain lookup failed: {type(e).__name__}: {e}"}
+        return {"status": "verified" if ok else "mismatch",
                 "detail": None if ok else "Onchain record does not match this route"}
 
     return router

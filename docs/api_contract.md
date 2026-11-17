@@ -11,6 +11,9 @@ Expiries use minute precision, for example `2026-11-20T22:00`.
 
 This section describes the fields as currently served by `integration` / `master`.
 
+- **2026-11-17: persistent onchain receipts.**
+  - Receipts are anchored on Solana devnet (Memo program) when a signer is configured, and stored in SQLite or Postgres, so they survive restarts.
+  - Added `POST /verify` {request, route, signature} for verifying without the server's database, and `GET /anchors` for hourly snapshot Merkle roots.
 - **2026-11-17: receipts and health.**
   - Added `POST /receipt` and `GET /verify/{route_id}` (see below).
   - Receipt fields: `route_id`, `hash` (SHA-256 of `{request, route}`), `signature`, `explorer_url`, `status` (`"confirmed"` | `"pending"`), `created_at`, `error`.
@@ -126,9 +129,11 @@ Errors: an unlisted strike raises `engine.StrikeNotFound`, with a `.nearest` lis
 
 ## POST /receipt
 
-This endpoint fingerprints a route and anchors the fingerprint on Solana devnet when the server has the optional `chain` module configured.
+This endpoint fingerprints a route and anchors the fingerprint on Solana devnet, as a Memo program transaction with memo `better:v1:<hash>`, when the server has a signer configured (`SOLANA_KEYPAIR`).
 
-Body: `{"request": RouteRequest | null, "route": Route}`. A bare `Route` also works, for backward compatibility. An invalid body returns 422. Posting the same route again returns the same receipt.
+Body: `{"request": RouteRequest | null, "route": Route}`. A bare `Route` also works, for backward compatibility. An invalid body returns 422. Posting the same route again returns the same receipt; if that receipt is still pending, anchoring is retried first.
+
+The hash is SHA-256 over the canonical JSON (sorted keys, no spaces) of `{"request": ..., "route": ...}`, after both are normalized by the API models.
 
 ```json
 {"route_id": "3f1c9a…(24 hex)", "hash": "3f1c9a…(64 hex sha256)", "signature": null,
@@ -138,7 +143,7 @@ Body: `{"request": RouteRequest | null, "route": Route}`. A bare `Route` also wo
 
 `status` is `"confirmed"` only when an onchain transaction was written. In that case, `signature` and `explorer_url` are set. `"pending"` means the fingerprint is saved but not onchain, and `error` says why. A pending receipt never affects the route.
 
-Receipts are held in server memory, so they are lost on restart.
+Receipts are stored in the server's database (SQLite at `RECEIPTS_DB`, or Postgres via `DATABASE_URL`), so they survive restarts. At startup, the server retries any receipts that are still pending, in the background.
 
 ## GET /verify/{route_id}
 
@@ -152,7 +157,31 @@ Receipts are held in server memory, so they are lost on restart.
 - `"mismatch"`: either check fails.
 - `"pending"`: the hash is intact, but nothing onchain can be checked against it.
 
-An unknown `route_id` returns 404.
+An unknown `route_id` returns 404. In that case, use `POST /verify`.
+
+## POST /verify
+
+This endpoint verifies a route straight against the chain. The proof lives onchain, so it works even if this server's database is gone.
+
+Body: `{"request": RouteRequest | null, "route": Route, "signature": "<tx signature>"}`. Send exactly the request and route that were receipted. The server recomputes the hash and checks that transaction `signature` carries the memo `better:v1:<hash>`. A missing `signature` or `route` returns 422.
+
+```json
+{"route_id": "3f1c9a…", "hash": "3f1c9a…", "signature": "5Kd…", "status": "verified",
+ "explorer_url": "https://explorer.solana.com/tx/5Kd…?cluster=devnet", "detail": null}
+```
+
+`status` is `"verified"` or `"mismatch"`, or `"pending"` if the chain could not be read.
+
+## GET /anchors
+
+This endpoint returns the latest 48 hourly snapshot anchors, newest first. Each one is a SHA-256 Merkle root of one UTC hour of snapshot-log lines, written onchain with memo `better:v1:snap:<YYYYMMDDHH>:<root>:<count>`:
+
+```json
+[{"hour": "2026111720", "root": "9a0c…(64 hex)", "count": 4180, "signature": "3xQ…",
+  "explorer_url": "https://explorer.solana.com/tx/3xQ…?cluster=devnet", "created_at": "2026-11-17T21:00:04+00:00"}]
+```
+
+`signature` and `explorer_url` are null if anchoring failed, for example with no signer configured. The list is empty if the snapshot logger is disabled.
 
 ## Snapshot log format (logger → stale replay)
 

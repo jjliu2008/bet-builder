@@ -37,7 +37,8 @@ from engine.stale import make_stale_fn, stale_flags
 
 from .ingest.poller import Poller, Settings, State
 from .logger import LogSettings, SnapshotLogger
-from .receipts import load_chain, make_router
+from .receipt_store import ReceiptStore
+from .receipts import load_chain, make_router, retry_pending
 from .replay import Replayer
 
 SUPPORTED_ASSETS = ("BTC",)
@@ -93,7 +94,8 @@ def _fair(state: State, expiry: str, books: List[Book]) -> Optional[dict]:
 
 
 def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
-               replayer: Optional[Replayer] = None, chain=None) -> FastAPI:
+               replayer: Optional[Replayer] = None, chain=None,
+               receipt_store=None) -> FastAPI:
     """Build the FastAPI app.
 
     With no arguments the environment decides: REPLAY_FILE serves a recorded log through a
@@ -101,6 +103,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     Pass `state` alone to serve prepared data with nothing running in the background (tests).
     `chain` is the optional onchain receipts module. By default the `chain` package is imported
     if present; without it, receipts are issued with status "pending".
+    `receipt_store` defaults to a `ReceiptStore` (DATABASE_URL Postgres, else SQLite at RECEIPTS_DB).
     """
     if state is None and poller is None and replayer is None:
         replay_file = os.environ.get("REPLAY_FILE")
@@ -112,14 +115,27 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
             poller = Poller(settings=Settings.from_env(),
                             logger=SnapshotLogger(log_settings) if log_settings.enabled else None)
     runner = replayer or poller                            # what keeps the state fresh; never both
+    chain = chain if chain is not None else load_chain()
+    store = receipt_store if receipt_store is not None else ReceiptStore()
     state = state or runner.state  # type: ignore[union-attr]
+
+    async def _retry_pending_quietly():
+        try:
+            await retry_pending(store, chain)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # a bad DB or chain at startup must not take the API down
+            pass
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         task = asyncio.create_task(runner.run()) if runner else None
+        # Retry receipts left pending (e.g. devnet was down) in the background; never block startup.
+        retry = asyncio.create_task(_retry_pending_quietly())
         try:
             yield
         finally:
+            retry.cancel()
             if runner and task:
                 runner.stop()
                 task.cancel()
@@ -177,11 +193,11 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
             stale_fn=make_stale_fn(books, key, fair, state.history.as_mapping(), state.spot_history, now),
             now=now)
 
-    chain = chain if chain is not None else load_chain()
     if chain is not None and getattr(chain, "router", None) is not None:
         app.include_router(chain.router)
     app.state.chain = chain
-    app.include_router(make_router(chain))
+    app.state.receipts = store
+    app.include_router(make_router(chain, store=store))
 
     return app
 
