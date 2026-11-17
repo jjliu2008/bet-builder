@@ -77,17 +77,23 @@ export interface Health {
   [k: string]: unknown;
 }
 
-// Receipts (section 5.8). Exact backend shapes are not in api_contract.md yet.
+// Receipts: POST /receipt and GET /verify/{route_id}, see docs/api_contract.md.
 export interface Receipt {
   route_id: string;
-  signature: string;
-  explorer_url: string;
-  hash?: string;
+  hash: string;
+  signature: string | null;
+  explorer_url: string | null;
+  /** "confirmed" = anchored on Solana devnet; "pending" = fingerprint saved, not onchain yet. */
+  status: "confirmed" | "pending";
+  created_at?: string;
+  error?: string | null;
 }
 
 export interface Verification {
   route_id: string;
-  status: "verified" | "mismatch" | string;
-  explorer_url?: string;
-  hash?: string;
+  status: "verified" | "mismatch" | "pending";
+  hash: string;
+  signature: string | null;
+  explorer_url: string | null;
+  detail?: string | null;
 }

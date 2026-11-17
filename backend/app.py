@@ -9,7 +9,8 @@ With REPLAY_FILE set, a `backend.replay.Replayer` fills the state from a recorde
 and no venue is contacted.
 
 Environment:
-    ALLOWED_ORIGINS    comma-separated CORS origins. Default "*" (open).
+    ALLOWED_ORIGINS    comma-separated CORS origins, e.g. "http://localhost:3000,https://bet.example".
+                       Default "*" (open). The frontend README uses this same name.
     POLL_INTERVAL_S    seconds between polls. Default 30.
     N_EXPIRIES         nearest matched expiries to poll. Default 3.
     MIN_EXPIRY_HOURS   skip expiries closer than this many hours. Default 0.
@@ -36,6 +37,7 @@ from engine.stale import make_stale_fn, stale_flags
 
 from .ingest.poller import Poller, Settings, State
 from .logger import LogSettings, SnapshotLogger
+from .receipts import load_chain, make_router
 from .replay import Replayer
 
 SUPPORTED_ASSETS = ("BTC",)
@@ -91,12 +93,14 @@ def _fair(state: State, expiry: str, books: List[Book]) -> Optional[dict]:
 
 
 def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
-               replayer: Optional[Replayer] = None) -> FastAPI:
+               replayer: Optional[Replayer] = None, chain=None) -> FastAPI:
     """Build the FastAPI app.
 
     With no arguments the environment decides: REPLAY_FILE serves a recorded log through a
     `Replayer`; otherwise a live poller is created. Whichever it is starts with the app.
     Pass `state` alone to serve prepared data with nothing running in the background (tests).
+    `chain` is the optional onchain receipts module. By default the `chain` package is imported
+    if present; without it, receipts are issued with status "pending".
     """
     if state is None and poller is None and replayer is None:
         replay_file = os.environ.get("REPLAY_FILE")
@@ -172,6 +176,12 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
             fair_fn=make_fair_fn(state.surface) if state.surface is not None else None,
             stale_fn=make_stale_fn(books, key, fair, state.history.as_mapping(), state.spot_history, now),
             now=now)
+
+    chain = chain if chain is not None else load_chain()
+    if chain is not None and getattr(chain, "router", None) is not None:
+        app.include_router(chain.router)
+    app.state.chain = chain
+    app.include_router(make_router(chain))
 
     return app
 

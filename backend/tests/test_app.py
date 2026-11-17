@@ -289,3 +289,100 @@ def test_cors_restricted_by_env(monkeypatch):
     assert ok.headers["access-control-allow-origin"] == "https://app.example"
     no = c.get("/health", headers={"Origin": "https://evil.example"})
     assert "access-control-allow-origin" not in no.headers
+
+
+# ---- /receipt, /verify -------------------------------------------------------------------
+RECEIPT_KEYS = {"route_id", "hash", "signature", "explorer_url", "status", "created_at", "error"}
+
+
+def _route_and_request(env):
+    req = {"asset": "BTC", "expiry": EXP_KEY, "type": "above", "lo": 68000, "hi": None, "size": 10}
+    r = env.client.post("/route", json=req)
+    assert r.status_code == 200
+    return r.json(), req
+
+
+def test_receipt_pending_without_chain(env):
+    route_body, req = _route_and_request(env)
+    r = env.client.post("/receipt", json={"request": req, "route": route_body})
+    assert r.status_code == 200
+    rec = r.json()
+    assert set(rec) == RECEIPT_KEYS
+    assert rec["status"] == "pending" and rec["signature"] is None and rec["explorer_url"] is None
+    assert len(rec["hash"]) == 64 and rec["hash"].startswith(rec["route_id"])
+    again = env.client.post("/receipt", json={"request": req, "route": route_body}).json()
+    assert again["route_id"] == rec["route_id"]                     # idempotent per route
+    v = env.client.get(f"/verify/{rec['route_id']}").json()
+    assert v["status"] == "pending" and v["hash"] == rec["hash"] and v["explorer_url"] is None
+
+
+def test_receipt_accepts_bare_route(env):
+    route_body, req = _route_and_request(env)
+    bare = env.client.post("/receipt", json=route_body).json()
+    wrapped = env.client.post("/receipt", json={"request": req, "route": route_body}).json()
+    assert bare["status"] == "pending" and bare["route_id"] != wrapped["route_id"]
+
+
+def test_receipt_rejects_bad_body_and_unknown_id(env):
+    assert env.client.post("/receipt", json={"route": {"legs": "nope"}}).status_code == 422
+    assert env.client.post("/receipt", json=[1, 2]).status_code == 422
+    assert env.client.get("/verify/doesnotexist").status_code == 404
+
+
+def test_receipt_with_chain_module():
+    from types import SimpleNamespace
+
+    from fastapi import APIRouter
+
+    written = {}
+    extra = APIRouter()
+
+    @extra.get("/chain/ping")
+    def ping():
+        return {"ok": True}
+
+    def anchor_hash(h):
+        written["sig"] = h
+        return {"signature": "SIG" + h[:8], "explorer_url": f"https://explorer.solana.com/tx/SIG{h[:8]}?cluster=devnet"}
+
+    chain = SimpleNamespace(router=extra, anchor_hash=anchor_hash,
+                            verify_hash=lambda sig, h: sig == "SIG" + h[:8])
+    e = Env()
+    client = TestClient(create_app(state=e.state, chain=chain))
+    assert client.get("/chain/ping").json() == {"ok": True}          # chain.router is mounted
+    route_body = client.post("/route", json={"asset": "BTC", "expiry": EXP_KEY, "type": "above",
+                                             "lo": 68000, "size": 10}).json()
+    rec = client.post("/receipt", json={"request": None, "route": route_body}).json()
+    assert rec["status"] == "confirmed" and rec["explorer_url"].endswith("cluster=devnet")
+    v = client.get(f"/verify/{rec['route_id']}").json()
+    assert v["status"] == "verified" and v["explorer_url"] == rec["explorer_url"]
+
+
+def test_receipt_chain_failure_stays_pending():
+    from types import SimpleNamespace
+
+    def boom(h):
+        raise RuntimeError("devnet down")
+
+    e = Env()
+    client = TestClient(create_app(state=e.state, chain=SimpleNamespace(anchor_hash=boom)))
+    route_body = client.post("/route", json={"asset": "BTC", "expiry": EXP_KEY, "type": "above",
+                                             "lo": 68000, "size": 10}).json()
+    rec = client.post("/receipt", json={"route": route_body}).json()
+    assert rec["status"] == "pending" and "devnet down" in rec["error"]
+
+
+def test_verify_detects_tampering():
+    from fastapi import FastAPI
+
+    from backend.receipts import make_router
+
+    store = {}
+    app = FastAPI()
+    app.include_router(make_router(None, store))
+    c = TestClient(app)
+    books = gemini_books() + kalshi_books()
+    rt = price_route(RouteRequest(expiry=EXP_KEY, type="above", lo=68000), books, now=NOW)
+    rec = c.post("/receipt", json=rt.model_dump(mode="json")).json()
+    store[rec["route_id"]]["route"]["total_cost"] = 0.01             # someone edits the stored route
+    assert c.get(f"/verify/{rec['route_id']}").json()["status"] == "mismatch"

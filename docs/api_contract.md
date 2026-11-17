@@ -7,6 +7,45 @@ Every endpoint uses public venue data, so no API keys are needed.
 Costs are per contract and include fees unless noted otherwise. Times are ISO 8601 UTC.
 Expiries use minute precision, for example `2026-11-20T22:00`.
 
+## Changelog
+
+This section describes the fields as currently served by `integration` / `master`.
+
+- **2026-11-17: receipts and health.**
+  - Added `POST /receipt` and `GET /verify/{route_id}` (see below).
+  - Receipt fields: `route_id`, `hash` (SHA-256 of `{request, route}`), `signature`, `explorer_url`, `status` (`"confirmed"` | `"pending"`), `created_at`, `error`.
+  - Verify fields: `route_id`, `status` (`"verified"` | `"mismatch"` | `"pending"`), `hash`, `signature`, `explorer_url`, `detail`.
+  - Added `GET /health`.
+  - CORS origins come from the backend's `ALLOWED_ORIGINS`.
+- **2026-11-16: near-expiry cutoff.**
+  - Under 2 hours to expiry, `/route` returns `fair_value: null` and `verdict: "n/a (too close to expiry)"`, and `/ladder` rows return `fair: null`.
+  - The snapshot log format was added for the logger and replay.
+- **Current `verdict` values:**
+  - `"good deal"` | `"fair"` | `"overpriced"`, with a ±2¢ band around `fair_value`
+  - `"n/a (too close to expiry)"`
+  - `null` when no fair value is available
+  - Neutral labels (`verdict_code` / `verdict_text` / `fair_note`) are **not** implemented yet.
+- **`/route` fields:**
+  - Contract fields: `legs[]` {`venue`, `contract`, `side`, `price`, `fee`, `size_available`, `link`}, `total_cost`, `max_payout`, `best_single_venue_cost`, `savings`, `fair_value`, `verdict`, `stale_warnings`, `mixed_settlement_index`, `timestamp`.
+  - Engine additions: `legs[]` {`size`, `fee_total`, `strike_lo`, `strike_hi`}, `build`, `cash_outlay`, `guaranteed_payout`, `size`, `filled_size`, `alternatives[]` {`build`, `venues`, `total_cost`, `cash_outlay`, `filled_size`, `complete`}, `warnings`.
+- **`/ladder` row fields:**
+  - `strike`
+  - `gemini` / `kalshi`: {`bid`, `ask`, `bid_size`, `ask_size`, `updated`} or null
+  - `fair`
+  - `stale` {`gemini`, `kalshi`}
+  - `stale_reasons` {`gemini`, `kalshi`}
+
+## GET /health
+
+This endpoint always returns HTTP 200 while the process is up. Read `status` for data health:
+- `"starting"` until the first poll completes.
+- `"ok"` while every source is fresh.
+- `"degraded"` once any source is older than 3 poll intervals.
+
+Other fields are `mode` (`"live"` or `"replay"`), `replay`, `poll_interval_s`, `last_poll`, `polls`, `last_poll_duration_s`, `loop_errors`, `venues` {gemini, kalshi, deribit}, `expiries`, `match`, and `snapshot_log`.
+
+While `status` is `"starting"`, the data endpoints return 503.
+
 ## GET /expiries?asset=BTC
 
 Returns the expiries listed on both Gemini and Kalshi, sorted ascending.
@@ -84,6 +123,36 @@ Errors: an unlisted strike raises `engine.StrikeNotFound`, with a `.nearest` lis
 ```json
 {"detail": "Strike 68100 is not listed for BTC 2026-11-20T22:00. Nearest listed strikes: 68000, 68500", "nearest": [68000, 68500]}
 ```
+
+## POST /receipt
+
+This endpoint fingerprints a route and anchors the fingerprint on Solana devnet when the server has the optional `chain` module configured.
+
+Body: `{"request": RouteRequest | null, "route": Route}`. A bare `Route` also works, for backward compatibility. An invalid body returns 422. Posting the same route again returns the same receipt.
+
+```json
+{"route_id": "3f1c9a…(24 hex)", "hash": "3f1c9a…(64 hex sha256)", "signature": null,
+ "explorer_url": null, "status": "pending", "created_at": "2026-11-17T19:02:11Z",
+ "error": "Onchain receipts are not configured on this server"}
+```
+
+`status` is `"confirmed"` only when an onchain transaction was written. In that case, `signature` and `explorer_url` are set. `"pending"` means the fingerprint is saved but not onchain, and `error` says why. A pending receipt never affects the route.
+
+Receipts are held in server memory, so they are lost on restart.
+
+## GET /verify/{route_id}
+
+```json
+{"route_id": "3f1c9a…", "status": "pending", "hash": "3f1c9a…", "signature": null,
+ "explorer_url": null, "detail": "Onchain receipts are not configured on this server"}
+```
+
+`status` values:
+- `"verified"`: the stored route still hashes to `hash`, and the chain confirms the transaction records it.
+- `"mismatch"`: either check fails.
+- `"pending"`: the hash is intact, but nothing onchain can be checked against it.
+
+An unknown `route_id` returns 404.
 
 ## Snapshot log format (logger → stale replay)
 

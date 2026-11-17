@@ -12,9 +12,9 @@ function describe(r: RouteRequest): string {
 
 function Verdict({ route }: { route: Route }) {
   const v = route.verdict;
+  if (v?.startsWith("n/a")) return <span className="pill">Fair value n/a (too close to expiry)</span>;
   if (route.fair_value === null || !v)
     return <span className="pill">Fair value unavailable</span>;
-  if (v.startsWith("n/a")) return <span className="pill">Fair value n/a (too close to expiry)</span>;
   const cls = v === "good deal" ? "pill-good" : v === "overpriced" ? "pill-bad" : "pill-warn";
   return <span className={`pill ${cls}`}>{v[0].toUpperCase() + v.slice(1)}</span>;
 }

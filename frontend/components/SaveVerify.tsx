@@ -8,7 +8,7 @@ type State =
   | { s: "idle" }
   | { s: "saving" }
   | { s: "done"; receipt: Receipt }
-  | { s: "pending"; reason: string };
+  | { s: "pending"; reason: string; receipt?: Receipt };
 
 /** Receipt failures never block the recommendation: the route stays visible, marked "receipt pending". */
 export default function SaveVerify({ route, request }: { route: Route; request: RouteRequest }) {
@@ -18,7 +18,10 @@ export default function SaveVerify({ route, request }: { route: Route; request: 
   async function save() {
     setState({ s: "saving" });
     try {
-      setState({ s: "done", receipt: await postReceipt(route, request) });
+      const receipt = await postReceipt(route, request);
+      // A receipt without an onchain transaction is "pending": the fingerprint is saved but not on Solana.
+      if (receipt.status === "confirmed" && receipt.explorer_url) setState({ s: "done", receipt });
+      else setState({ s: "pending", reason: receipt.error ?? "not anchored onchain yet", receipt });
     } catch (e) {
       setState({ s: "pending", reason: e instanceof ApiError ? e.message : "Unknown error" });
     }
@@ -40,7 +43,7 @@ export default function SaveVerify({ route, request }: { route: Route; request: 
     return (
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-3">
-          <a href={receipt.explorer_url} target="_blank" rel="noreferrer" className="pill pill-good">
+          <a href={receipt.explorer_url ?? undefined} target="_blank" rel="noreferrer" className="pill pill-good">
             ✓ Verified on Solana ↗
           </a>
           <a href={`/verify/${encodeURIComponent(receipt.route_id)}`} className="link text-sm">
@@ -62,9 +65,17 @@ export default function SaveVerify({ route, request }: { route: Route; request: 
           {state.s === "saving" ? "Saving…" : state.s === "pending" ? "Retry receipt" : "Save & verify"}
         </button>
         {state.s === "pending" && <span className="pill pill-warn">Receipt pending</span>}
+        {state.s === "pending" && state.receipt && (
+          <a href={`/verify/${encodeURIComponent(state.receipt.route_id)}`} className="link text-sm">
+            Check receipt
+          </a>
+        )}
       </div>
       {state.s === "pending" && (
-        <p className="muted text-xs">Your route is still valid. The Solana receipt could not be written yet ({state.reason}).</p>
+        <p className="muted text-xs">
+          Your route is still valid. The Solana receipt could not be written yet ({state.reason}).
+          {state.receipt && <> Fingerprint <span className="break-all">{state.receipt.hash.slice(0, 16)}…</span> saved.</>}
+        </p>
       )}
     </div>
   );
