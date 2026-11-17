@@ -19,6 +19,13 @@ it stops for the day.
 Disk writes happen on a background thread. A write error is logged and counted; it never
 reaches the poll loop.
 
+Hourly anchoring. Once per UTC hour (on the first write of a new hour), the previous hour's
+snapshot-log lines are hashed into a SHA-256 Merkle root (`merkle_root`) and written onchain with
+`chain.anchor_root("<YYYYMMDDHH>", root, line_count)` on its own daemon thread, then saved in the
+receipt store's `anchors` table (served by GET /anchors). Hours already anchored are skipped, so a
+restart catches up the hour it missed. It is skipped silently when there is no chain module or
+no signer; a failure is recorded on the anchor row (signature null) and never affects logging.
+
 Environment:
     LOG_DIR             where to write. Default data/snapshots.
     LOG_ENABLED         0 turns logging off. Default 1.
@@ -28,6 +35,7 @@ Environment:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -37,7 +45,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from engine import Book, expiry_key, fair_above
 from engine.books import iso, to_utc
@@ -200,6 +208,45 @@ def _ts(raw: bytes) -> Optional[datetime]:
         return None
 
 
+def merkle_root(lines: Iterable[bytes]) -> Tuple[Optional[str], int]:
+    """SHA-256 Merkle root over log lines.
+
+    Each line (bytes, without its trailing newline) is hashed with SHA-256 to make the leaves.
+    Adjacent nodes are paired and hashed as SHA-256(left || right) on raw 32-byte digests; when a
+    level has an odd count, the last node is duplicated. A single line's root is its leaf hash.
+
+    Returns:
+        (root as 64 hex chars, or None for no lines; the number of lines).
+    """
+    level = [hashlib.sha256(l).digest() for l in lines]
+    count = len(level)
+    if not level:
+        return None, 0
+    while len(level) > 1:
+        if len(level) % 2:
+            level.append(level[-1])
+        level = [hashlib.sha256(level[i] + level[i + 1]).digest() for i in range(0, len(level), 2)]
+    return level[0].hex(), count
+
+
+def hour_lines(path: str, hour: datetime) -> Iterator[bytes]:
+    """Yield the lines of a snapshot log whose `ts` falls in the UTC hour starting at `hour`."""
+    start = to_utc(hour).replace(minute=0, second=0, microsecond=0)
+    end = start + timedelta(hours=1)
+    try:
+        f = open(path, "rb")
+    except OSError:
+        return
+    with f:
+        for raw in f:
+            raw = raw.rstrip(b"\r\n")
+            if not raw:
+                continue
+            ts = _ts(raw)
+            if ts is not None and start <= ts < end:
+                yield raw
+
+
 class SnapshotLogger:
     """Writes polls to disk off the event loop and keeps the numbers /health reports.
 
@@ -208,10 +255,13 @@ class SnapshotLogger:
         poll_interval_s: seconds between polls, for the per-day estimate.
         window_pct: the full-depth window, as a fraction of spot.
         background: False writes inline, which tests use.
+        chain: the optional onchain module (needs `anchor_root`; `signer_pubkey` is checked).
+        anchor_store: where anchors are saved (backend.receipt_store.ReceiptStore). Hourly
+            anchoring runs only when both are given.
     """
 
     def __init__(self, settings: Optional[LogSettings] = None, poll_interval_s: float = 30.0,
-                 window_pct: float = 0.03, background: bool = True):
+                 window_pct: float = 0.03, background: bool = True, chain=None, anchor_store=None):
         self.settings = settings or LogSettings()
         self.poll_interval_s = poll_interval_s
         self.window_pct = window_pct
@@ -238,6 +288,14 @@ class SnapshotLogger:
         self.warm_start: Optional[dict] = None
         self.path: Optional[str] = None
         self.deribit_path: Optional[str] = None
+        # hourly anchoring
+        self.chain = chain
+        self.anchor_store = anchor_store
+        self._anchor_checked: set = set()                  # hours already considered
+        self._anchor_threads: List[threading.Thread] = []
+        self.anchors_written = 0
+        self.anchor_errors = 0
+        self.last_anchor: Optional[dict] = None
 
     # -- paths
     def paths(self, ts: datetime) -> Tuple[str, str]:
@@ -314,10 +372,68 @@ class SnapshotLogger:
             self.bytes_today += total
             self.last_write = ts
             self._sizes.append(total)
+            self._maybe_anchor(ts)
             if self.auto:
                 self.every_n = self._auto_n()
         except Exception as e:
             self._fail(e)
+
+    # -- hourly anchoring
+    def anchoring_enabled(self) -> bool:
+        """True if a chain module with anchor_root, a signer, and an anchor store are all present."""
+        c = self.chain
+        if c is None or self.anchor_store is None or not hasattr(c, "anchor_root"):
+            return False
+        signer = getattr(c, "signer_pubkey", None)
+        return signer is None or signer() is not None
+
+    def _maybe_anchor(self, ts: datetime) -> None:
+        """On a write in a new UTC hour, anchor the previous hour on a daemon thread. Never raises."""
+        try:
+            prev = to_utc(ts).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+            label = prev.strftime("%Y%m%d%H")
+            if label in self._anchor_checked:
+                return
+            self._anchor_checked.add(label)
+            if not self.anchoring_enabled() or self.anchor_store.has_anchor(label):
+                return
+            t = threading.Thread(target=self.anchor_hour, args=(prev,), name=f"anchor-{label}", daemon=True)
+            self._anchor_threads.append(t)
+            t.start()
+        except Exception as e:
+            self.anchor_errors += 1
+            log.warning("snapshot anchoring skipped: %s: %s", type(e).__name__, e)
+
+    def anchor_hour(self, hour: datetime) -> Optional[dict]:
+        """Merkle-hash one UTC hour of the snapshot log, anchor it onchain, and save the row.
+
+        Returns the saved anchor dict, or None if the hour had no lines. Never raises.
+        """
+        try:
+            label = to_utc(hour).strftime("%Y%m%d%H")
+            root, count = merkle_root(hour_lines(self.paths(hour)[0], hour))
+            if root is None:
+                return None
+            sig = url = None
+            try:
+                res = self.chain.anchor_root(label, root, count) or {}
+                sig, url = res.get("signature"), res.get("explorer_url")
+                self.anchors_written += 1
+            except Exception as e:
+                self.anchor_errors += 1
+                log.warning("anchoring %s failed: %s: %s", label, type(e).__name__, e)
+            self.anchor_store.save_anchor(label, root, count, sig, url)
+            self.last_anchor = {"hour": label, "root": root, "count": count, "signature": sig, "explorer_url": url}
+            return self.last_anchor
+        except Exception as e:
+            self.anchor_errors += 1
+            log.warning("anchoring failed: %s: %s", type(e).__name__, e)
+            return None
+
+    def wait_anchors(self, timeout: float = 30.0) -> None:
+        """Wait for anchoring threads started so far (tests, shutdown)."""
+        for t in list(self._anchor_threads):
+            t.join(timeout)
 
     def _fail(self, e: Exception) -> None:
         self.write_errors += 1
@@ -393,4 +509,6 @@ class SnapshotLogger:
                 "capped": self.capped, "polls_skipped_cap": self.polls_skipped_cap,
                 "last_write": iso(self.last_write) if self.last_write else None,
                 "write_errors": self.write_errors, "dropped": self.dropped, "last_error": self.last_error,
-                "warm_start": self.warm_start}
+                "warm_start": self.warm_start,
+                "anchoring": {"enabled": self.anchoring_enabled(), "written": self.anchors_written,
+                              "errors": self.anchor_errors, "last": self.last_anchor}}

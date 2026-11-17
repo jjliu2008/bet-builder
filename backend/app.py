@@ -105,6 +105,8 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     if present; without it, receipts are issued with status "pending".
     `receipt_store` defaults to a `ReceiptStore` (DATABASE_URL Postgres, else SQLite at RECEIPTS_DB).
     """
+    chain = chain if chain is not None else load_chain()
+    store = receipt_store if receipt_store is not None else ReceiptStore()
     if state is None and poller is None and replayer is None:
         replay_file = os.environ.get("REPLAY_FILE")
         if replay_file:
@@ -113,10 +115,9 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
         else:
             log_settings = LogSettings.from_env()
             poller = Poller(settings=Settings.from_env(),
-                            logger=SnapshotLogger(log_settings) if log_settings.enabled else None)
+                            logger=SnapshotLogger(log_settings, chain=chain, anchor_store=store)
+                            if log_settings.enabled else None)
     runner = replayer or poller                            # what keeps the state fresh; never both
-    chain = chain if chain is not None else load_chain()
-    store = receipt_store if receipt_store is not None else ReceiptStore()
     state = state or runner.state  # type: ignore[union-attr]
 
     async def _retry_pending_quietly():
@@ -198,6 +199,16 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     app.state.chain = chain
     app.state.receipts = store
     app.include_router(make_router(chain, store=store))
+
+    @app.get("/anchors")
+    async def anchors() -> List[dict]:
+        """The latest 48 hourly snapshot anchors (Merkle roots onchain), newest first."""
+        if not hasattr(store, "anchors"):
+            return []
+        try:
+            return store.anchors(48)
+        except Exception as e:
+            raise Unavailable(f"Anchor store unavailable: {type(e).__name__}: {e}")
 
     return app
 
