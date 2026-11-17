@@ -33,3 +33,15 @@ Key environment variables (the full list is in the `backend/app.py` docstring):
 Receipts (`POST /receipt`, `GET /verify/{id}`) live in `backend/receipts.py`. If an optional `chain`
 package with `anchor_hash` / `verify_hash` (and optionally `router`) is importable, receipts are
 anchored on Solana devnet. Otherwise they are issued with status `"pending"`.
+
+### Onchain receipts (Solana devnet)
+
+The `chain/` package anchors each receipt hash as a Memo transaction (`better:v1:<route_id>:<sha256>`).
+Set the signing key in the environment, never in the repo:
+
+```bash
+SOLANA_KEYPAIR_PATH=~/.config/bet-builder/devnet-keypair.json   # or SOLANA_KEYPAIR='[...64 ints...]'
+SOLANA_RPC_URL=https://api.devnet.solana.com                    # devnet or localhost only
+```
+
+Use a devnet-only key funded from https://faucet.solana.com. Without a key, receipts stay "pending".
