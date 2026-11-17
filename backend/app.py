@@ -37,6 +37,7 @@ from engine.stale import make_stale_fn, stale_flags
 
 from .ingest.poller import Poller, Settings, State
 from .logger import LogSettings, SnapshotLogger
+from .receipt_store import receipt_store_from_env
 from .receipts import load_chain, make_router
 from .replay import Replayer
 
@@ -181,7 +182,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     if chain is not None and getattr(chain, "router", None) is not None:
         app.include_router(chain.router)
     app.state.chain = chain
-    app.include_router(make_router(chain))
+    app.include_router(make_router(chain, store=receipt_store_from_env()))
 
     return app
 

@@ -32,3 +32,5 @@ Thumbs.db
 
 # Snapshot logs
 data/
+
+*.db

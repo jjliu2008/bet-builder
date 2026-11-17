@@ -45,3 +45,5 @@ SOLANA_RPC_URL=https://api.devnet.solana.com                    # devnet or loca
 ```
 
 Use a devnet-only key funded from https://faucet.solana.com. Without a key, receipts stay "pending".
+
+Set `RECEIPTS_DB=./receipts.db` to keep receipts in SQLite so `/verify` links survive restarts (default: in memory).
