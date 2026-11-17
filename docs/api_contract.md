@@ -244,3 +244,12 @@ Each record has `type` and `ts`, which is ISO 8601 UTC. Records that share the s
 
 Rule (a) needs at least `frozen_window_s` (default 5 min) of history, so poll at least once a minute.
 `python scripts/live_demo.py --loops N --interval 60 --record LOG.jsonl` writes `book` and `spot` records in this format.
+
+## Supporting market-quality assessment
+
+`POST /route` adds an optional `market_quality` object. It contains `status`
+(`clear`, `caution`, `review`, `unreliable`), `risk_score` (0–100),
+`advisory_only`, `evaluated_at`, `methodology`, `unavailable_signals`, and
+`findings` (code, message, score, optional venue and contract).
+Findings are also summarized in the existing `warnings` array for frontend
+compatibility. Routing and pricing are unchanged. See [market_quality.md](market_quality.md).
