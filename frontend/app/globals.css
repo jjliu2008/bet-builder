@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --ink: #12151c;
+  --ink-2: #5b6473;
+  --line: #e3e6ec;
+  --accent: #4f46e5;
+  --good: #0f8a5f;
+  --bad: #c2362f;
+  --warn: #a86a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0f14;
+    --panel: #151922;
+    --ink: #eceef3;
+    --ink-2: #98a1b3;
+    --line: #262c3a;
+    --accent: #8b87ff;
+    --good: #3ddc97;
+    --bad: #ff6b63;
+    --warn: #f2b34a;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-ink: var(--ink);
+  --color-ink2: var(--ink-2);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-good: var(--good);
+  --color-bad: var(--bad);
+  --color-warn: var(--warn);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+@layer components {
+  .card { @apply rounded-2xl border border-line bg-panel p-5 sm:p-6; }
+  .muted { color: var(--ink-2); }
+  .label { @apply block text-xs font-medium uppercase tracking-wide mb-1; color: var(--ink-2); }
+  .input { @apply w-full rounded-lg border border-line bg-transparent px-3 py-2 text-base outline-none focus:ring-2 focus:ring-accent disabled:opacity-60; }
+  .input option { color: #12151c; }
+  .btn { @apply rounded-lg bg-accent px-4 py-2.5 font-semibold text-white disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent; }
+  .btn-outline { @apply rounded-lg border border-accent px-4 py-2 font-semibold text-accent disabled:opacity-60; }
+  .seg { @apply rounded-lg border border-line px-3 py-2 text-sm font-medium; }
+  .seg-on { @apply border-accent text-accent; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .pill { @apply inline-flex items-center rounded-full border border-line px-2.5 py-0.5 text-xs font-semibold; }
+  .pill-good { color: var(--good); border-color: var(--good); }
+  .pill-bad { color: var(--bad); border-color: var(--bad); }
+  .pill-warn { color: var(--warn); border-color: var(--warn); }
+  .link { @apply text-accent underline-offset-2 hover:underline; }
+  .leg { @apply rounded-lg border border-line p-3; }
+  .note { @apply rounded-lg border px-3 py-2 text-sm; }
+  .note-bad { color: var(--bad); border-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+  .note-warn { color: var(--warn); border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+}
