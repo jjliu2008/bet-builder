@@ -1,6 +1,6 @@
 """Offline tests for the poller and shared state, replaying one recorded live poll."""
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -9,6 +9,7 @@ from backend.ingest import kalshi
 from backend.ingest.poller import Poller, Settings, State, nearest_expiries
 from backend.tests.replay import Replay
 from engine import expiry_key
+from engine.books import to_utc
 
 INTERVAL = 30.0
 
@@ -263,3 +264,116 @@ def test_settings_from_env(monkeypatch):
     s = Settings.from_env()
     assert (s.poll_interval_s, s.kalshi_rps, s.n_expiries) == (10.0, 4.5, 2)
     assert Poller(settings=s).clients["kalshi"].limiter.rate == 4.5
+
+
+# ---- matcher and expiry rollover ---------------------------------------------------------
+NEW_EXPIRY = "2026-11-30T22:00"          # in the recording, Gemini lists this and Kalshi does not
+
+
+def kalshi_starts_listing(replay, src: str, new: str) -> None:
+    """Edit the recording so Kalshi lists `new`, by cloning its `src` markets and their order books.
+
+    Gemini already lists `new` but its books were never recorded (it wasn't polled), so each one
+    gets a copy of a recorded book.
+    """
+    tag = lambda key: datetime.fromisoformat(key).replace(tzinfo=timezone.utc).astimezone(
+        timezone(timedelta(hours=-5))).strftime("%y%b%d%H").upper()        # e.g. 26NOV2017
+    old_tag, new_tag = tag(src), tag(new)
+    R = replay.responses
+    for key in [k for k in R if "/trade-api/v2/events" in k]:
+        clones = []
+        for e in R[key]["events"]:
+            ms = [dict(m, ticker=m["ticker"].replace(old_tag, new_tag), close_time=new + ":00Z")
+                  for m in e["markets"] if expiry_key(m["close_time"]) == src]
+            if ms:
+                clones.append({"event_ticker": (e.get("event_ticker") or "").replace(old_tag, new_tag), "markets": ms})
+        assert clones, f"no Kalshi markets recorded for {src}"
+        R[key]["events"] += clones
+    for key in [k for k in R if "/orderbook" in k and old_tag in k]:
+        R[key.replace(old_tag, new_tag)] = R[key]
+    events = next(v for k, v in R.items() if "prediction-markets/events" in k)["data"]
+    payloads = [v for k, v in sorted(R.items()) if "/v1/book/" in k]
+    symbols = [c["instrumentSymbol"] for e in events for c in e["contracts"] if expiry_key(c["expiryDate"]) == new]
+    assert symbols, f"Gemini does not list {new} in the recording"
+    for i, sym in enumerate(symbols):
+        R[f"api.gemini.com/v1/book/{sym}?limit_asks=10&limit_bids=10"] = payloads[i % len(payloads)]
+
+
+def ids_for(st, expiry):
+    return {cid for v in st.books.values() for cid, b in v.items() if expiry_key(b.expiry) == expiry}
+
+
+def test_poll_stores_the_match_report(env):
+    st = env.poll()
+    assert st.match is not None and st.match.matched == st.matched == env.replay.meta["targets"]
+    assert len(st.catalog["gemini"]) > len(st.books["gemini"])            # the catalog covers unpolled expiries too
+    assert {expiry_key(b.expiry) for b in st.catalog["gemini"]} > set(st.expiries)
+    gem_only = [u for u in st.match.unmatched_expiries if u.venue == "gemini"]
+    assert [u.expiry for u in gem_only] == [NEW_EXPIRY]
+    # every pair's contracts have live books for the polled expiries
+    for e in st.expiries:
+        for p in st.match.expiries[e].pairs:
+            assert p.gemini in st.books["gemini"] and p.kalshi in st.books["kalshi"]
+    summary = st.health()["match"]
+    assert summary == st.match.summary() and summary["matched_expiries"] == 3 and summary["pairs"] > 0
+    assert summary["unmatched_expiries"] >= 1
+
+
+def test_expired_expiry_rolls_off_and_a_new_one_comes_in(env):
+    st = env.poll()
+    first, second, third = st.expiries
+    old_ids = ids_for(st, first)
+    assert old_ids and any(st.history.series(cid) for cid in old_ids)
+
+    # Between polls the clock passes the first expiry: readers stop seeing it at once.
+    env.t = to_utc(first) + timedelta(seconds=5)
+    assert st.expiries == [first, second, third] and st.live_expiries == [second, third]
+
+    # 1. The next poll rolls it off.
+    asked_before = env.replay.count("/orderbook")
+    env.poll()
+    assert st.expiries == [second, third] and st.matched == [second, third]
+    assert ids_for(st, first) == set()                                    # its books are gone
+    assert not any(st.history.series(cid) for cid in old_ids)             # and so is its quote history
+    assert st.match.expiries[first].expired is True                       # still reported, marked expired
+    assert len(st.match.expiries[first].pairs) > 0
+    assert st.status() == "ok" and all(s.ok for s in st.sources.values())
+    rolled = [k for k in env.replay.hits if "/orderbook" in k]
+    assert env.replay.count("/orderbook") > asked_before                  # the live expiries were refreshed
+    old_tickers = {cid for cid in old_ids if cid.startswith("KX")}
+    assert all(env.replay.hits[k] == 1 for k in rolled if k.split("/markets/")[1].split("/")[0] in old_tickers)
+
+    # 2. Kalshi starts listing an expiry that only Gemini had: it is matched and polled in the same cycle.
+    assert NEW_EXPIRY in [u.expiry for u in st.match.unmatched_expiries]
+    kalshi_starts_listing(env.replay, third, NEW_EXPIRY)
+    env.poll(advance_s=INTERVAL)
+    assert st.expiries == [second, third, NEW_EXPIRY]
+    assert NEW_EXPIRY not in [u.expiry for u in st.match.unmatched_expiries]
+    m = st.match.expiries[NEW_EXPIRY]
+    assert m.pairs and m.buckets and not m.expired
+    new_books = st.books_for(NEW_EXPIRY)
+    assert {b.venue for b in new_books} == {"gemini", "kalshi"}
+    assert all(p.gemini in st.books["gemini"] and p.kalshi in st.books["kalshi"] for p in m.pairs)
+    assert m.unmatched_on("gemini") and all("Kalshi has no threshold at that strike" in u.reason
+                                            for u in m.unmatched_on("gemini"))
+    assert st.sources["gemini"].last_error is None and st.status() == "ok"
+
+
+def test_expiry_rolls_off_even_when_a_listing_is_down(env):
+    st = env.poll()
+    first, second, third = st.expiries
+    env.down(KALSHI)
+    env.t = to_utc(first) + timedelta(seconds=5)
+    env.poll()
+    assert st.expiries == [second, third]                                 # matched from Kalshi's last good listing
+    assert st.sources["kalshi"].ok is False and st.match.expiries[first].expired
+    assert {expiry_key(b.expiry) for b in st.books["gemini"].values()} == {second, third}
+
+
+def test_no_expiries_left(env):
+    st = env.poll()
+    env.t = to_utc(st.matched[-1]) + timedelta(seconds=1)
+    env.t = max(env.t, to_utc(NEW_EXPIRY) + timedelta(seconds=1))
+    env.poll()
+    assert st.expiries == [] and st.matched == [] and st.books == {"gemini": {}, "kalshi": {}}
+    assert all(m.expired for m in st.match.expiries.values())

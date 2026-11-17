@@ -62,9 +62,10 @@ def _books(state: State, expiry: str) -> tuple:
         key = expiry_key(expiry)
     except ValueError:
         raise HTTPException(422, f"Bad expiry '{expiry}'. Use ISO UTC to the minute, e.g. 2026-11-20T22:00")
-    if key not in state.expiries:
+    live = state.live_expiries
+    if key not in live:
         raise HTTPException(404, f"Expiry {key} is not available for {state.asset}. "
-                                 f"Available: {', '.join(state.expiries) or 'none'}")
+                                 f"Available: {', '.join(live) or 'none'}")
     books = state.books_for(key)
     if not books:
         raise Unavailable(f"No books held for {state.asset} {key}")
@@ -133,7 +134,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None) -
     async def expiries(asset: str = Query("BTC")) -> List[str]:
         _asset(asset)
         _ready(state)
-        return state.expiries
+        return state.live_expiries
 
     @app.get("/ladder")
     async def ladder(expiry: str, asset: str = Query("BTC")) -> List[dict]:

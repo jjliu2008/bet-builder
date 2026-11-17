@@ -82,7 +82,7 @@ def test_health_starting_serves_503_for_data():
 def test_health_ok(env):
     h = env.client.get("/health").json()
     assert set(h) == {"status", "mode", "poll_interval_s", "last_poll", "polls", "last_poll_duration_s",
-                      "loop_errors", "venues", "expiries", "snapshot_log"}
+                      "loop_errors", "venues", "expiries", "match", "snapshot_log"}
     assert h["status"] == "ok" and h["last_poll"] == "2026-11-16T12:00:00Z"
     assert h["polls"] == 1 and h["expiries"] == 1 and h["last_poll_duration_s"] == 1.5
     assert set(h["venues"]) == {"gemini", "kalshi", "deribit"}
@@ -118,6 +118,15 @@ def test_unsupported_asset_is_422(env):
     assert env.client.get("/expiries", params={"asset": "DOGE"}).status_code == 422
     assert ladder(env, asset="DOGE").status_code == 422
     assert route(env, asset="DOGE", type="above", lo=68000).status_code == 422
+
+
+def test_expiry_that_passed_between_polls_is_not_served(env):
+    assert env.client.get("/expiries").json() == [EXP_KEY]
+    env.t = EXP + timedelta(seconds=1)                               # no poll has run since
+    assert env.client.get("/expiries").json() == []
+    r = ladder(env)
+    assert r.status_code == 404 and "Available: none" in r.json()["detail"]
+    assert route(env, type="above", lo=68000).status_code == 404
 
 
 # ---- /ladder -----------------------------------------------------------------------------

@@ -18,8 +18,10 @@ import httpx
 
 from engine import Book, Surface, build_surface, expiry_key
 from engine.books import iso, to_utc
+from engine.dev_fetch import parse_gemini_book
 from engine.stale import History
 
+from ..matcher import Issue, MatchReport, build_report
 from . import deribit, gemini, kalshi
 from .http import ClientStats, VenueClient
 
@@ -71,13 +73,27 @@ class SourceStatus:
     last_error_at: Optional[datetime] = None
 
 
+class QuoteHistory(History):
+    """The engine's History, plus a way to forget contracts that are no longer polled."""
+
+    def keep_only(self, keys) -> int:
+        """Drop every series whose key is not in `keys`. Return how many were dropped."""
+        dead = [k for k in self._d if k not in keys]
+        for k in dead:
+            del self._d[k]
+        return len(dead)
+
+
 class State:
     """Everything the endpoints read. Only the poller writes to it.
 
     Attributes:
-        expiries: the expiry keys being polled (nearest matched, ascending). GET /expiries returns these.
-        matched: every expiry listed on both venues, including ones not polled.
-        books: {venue: {contract_id: Book}} for the polled expiries.
+        expiries: the expiry keys being polled (nearest matched, ascending).
+        matched: every unexpired expiry listed on both venues, including ones not polled.
+        match: the matcher's MatchReport for every listed contract (pairs, buckets, unmatched, reasons).
+        catalog: {venue: [Book]} for every listed contract on every expiry, without order-book levels
+            beyond what the listing gives. This is the matcher's input.
+        books: {venue: {contract_id: Book}} with live quotes, for the polled expiries only.
         spot: the Deribit index price in $, or None.
         surface: the fitted Deribit surface, or None.
         history: quote mids by contract id and spot under "spot:<ASSET>", for the stale detector.
@@ -91,11 +107,14 @@ class State:
         self.now = now
         self.expiries: List[str] = []
         self.matched: List[str] = []
+        self.match: Optional[MatchReport] = None
+        self.catalog: Dict[str, List[Book]] = {v: [] for v in VENUES}
+        self.skipped: Dict[str, List[Issue]] = {v: [] for v in VENUES}
         self.books: Dict[str, Dict[str, Book]] = {v: {} for v in VENUES}
         self.spot: Optional[float] = None
         self.surface: Optional[Surface] = None
         self.deribit_rows: Optional[List[dict]] = None
-        self.history = History()
+        self.history = QuoteHistory()
         self.sources: Dict[str, SourceStatus] = {s: SourceStatus() for s in SOURCES}
         self.stats: Dict[str, ClientStats] = {s: ClientStats() for s in SOURCES}
         self.polls = 0
@@ -107,6 +126,12 @@ class State:
     def books_for(self, expiry: str) -> List[Book]:
         """Return both venues' books for one expiry key."""
         return [b for v in VENUES for b in self.books[v].values() if expiry_key(b.expiry) == expiry]
+
+    @property
+    def live_expiries(self) -> List[str]:
+        """The polled expiries that have not passed yet. An expiry can pass between two polls."""
+        now = self.now()
+        return [e for e in self.expiries if to_utc(e) > now]
 
     @property
     def spot_history(self) -> list:
@@ -142,6 +167,9 @@ class State:
     def finish_poll(self, expiries: Sequence[str], ts: Optional[datetime] = None,
                     duration_s: Optional[float] = None) -> None:
         self.expiries = list(expiries)
+        # Contracts that rolled off are no longer polled, so their quote history is dropped.
+        live = {cid for v in VENUES for cid in self.books[v]}
+        self.history.keep_only(live | {f"spot:{self.asset}"})
         self.polls += 1
         self.last_poll = ts or self.now()
         self.last_poll_duration_s = duration_s
@@ -171,12 +199,48 @@ class State:
         return {"status": self.status(), "mode": "live", "poll_interval_s": self.poll_interval_s,
                 "last_poll": t(self.last_poll), "polls": self.polls,
                 "last_poll_duration_s": self.last_poll_duration_s, "loop_errors": self.loop_errors,
-                "venues": venues, "expiries": len(self.expiries), "snapshot_log": None}
+                "venues": venues, "expiries": len(self.expiries),
+                "match": self.match.summary() if self.match else None, "snapshot_log": None}
 
 
 def nearest_expiries(matched: Sequence[str], now: datetime, n: int) -> List[str]:
     """Return the `n` soonest expiry keys that are still in the future."""
     return [e for e in sorted(matched) if to_utc(e) > now][:n]
+
+
+def catalog_from_listings(gem_list, kal_list, asset: str = "BTC", now: Optional[datetime] = None) -> tuple:
+    """Turn the two venue listings into listing-only Books for every contract on every expiry.
+
+    No request is made. Gemini books have no levels; Kalshi books carry the listing's top of book.
+
+    Returns:
+        (gemini books, kalshi books, gemini issues, kalshi issues). A side is None if its listing
+        is None. An issue is a contract that could not be normalized, with the reason.
+    """
+    gem = kal = gem_bad = kal_bad = None
+    if gem_list is not None:
+        gem, gem_bad = [], []
+        for c, e in gem_list:
+            try:
+                gem.append(parse_gemini_book(c, e, {}, asset, now))
+            except Exception as err:
+                gem_bad.append(Issue(venue="gemini", contract_id=c.get("instrumentSymbol"),
+                                     reason=f"Could not normalize: {type(err).__name__}: {err}"))
+    if kal_list is not None:
+        kal, kal_bad = [], []
+        for series, m in kal_list:
+            try:
+                b = kalshi.top_book(series, m, asset, now)
+            except Exception as err:
+                kal_bad.append(Issue(venue="kalshi", contract_id=m.get("ticker"),
+                                     reason=f"Could not normalize: {type(err).__name__}: {err}"))
+                continue
+            if b is None:
+                kal_bad.append(Issue(venue="kalshi", contract_id=m.get("ticker"),
+                                     reason=f"Strike type {m.get('strike_type')!r} is not recognised"))
+            else:
+                kal.append(b)
+    return gem, kal, gem_bad, kal_bad
 
 
 class Poller:
@@ -204,8 +268,6 @@ class Poller:
             self.state.stats[name] = c.stats
         self._clock = clock
         self._stop = asyncio.Event()
-        self._gem_exp: Optional[Set[str]] = None
-        self._kal_exp: Optional[Set[str]] = None
 
     # -- one cycle
     async def poll_once(self) -> None:
@@ -217,15 +279,17 @@ class Poller:
             self._guard("kalshi", kalshi.list_markets(self.clients["kalshi"], asset)),
             self._deribit())
 
-        if gem_list is not None:
-            self._gem_exp = {gemini.expiry_of(c, e) for c, e in gem_list}
-        if kal_list is not None:
-            self._kal_exp = {kalshi.expiry_of(m) for series, m in kal_list
-                             if series == kalshi.threshold_series(asset)}
-        targets = st.expiries
-        if self._gem_exp is not None and self._kal_exp is not None:
-            st.matched = sorted(self._gem_exp & self._kal_exp)
-            targets = nearest_expiries(st.matched, st.now(), s.n_expiries)
+        # Match every listed contract. A venue whose listing failed keeps its last catalog, and the
+        # match is rebuilt against the current time, so an expired expiry rolls off either way.
+        gem, kal, gem_bad, kal_bad = catalog_from_listings(gem_list, kal_list, asset, st.now())
+        if gem is not None:
+            st.catalog["gemini"], st.skipped["gemini"] = gem, gem_bad
+        if kal is not None:
+            st.catalog["kalshi"], st.skipped["kalshi"] = kal, kal_bad
+        st.match = build_report([b for v in VENUES for b in st.catalog[v]], st.now(), asset,
+                                [i for v in VENUES for i in st.skipped[v]])
+        st.matched = st.match.matched
+        targets = nearest_expiries(st.matched, st.now(), s.n_expiries)
 
         window = (st.spot * (1 - s.window_pct), st.spot * (1 + s.window_pct)) if st.spot else None
         await asyncio.gather(self._gemini_books(gem_list, targets),
