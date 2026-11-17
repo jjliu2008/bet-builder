@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .books import Book, Fill, Side, cost_to_buy, expiry_key, iso
+from .market_quality import MarketQuality, assess_market_quality
 from .fairvalue import (MIN_FAIR_HOURS, OPTIONS_HIGHER_THRESHOLD, OPTIONS_LOWER_THRESHOLD, fair_hidden,
                         verdict)
 
@@ -136,6 +137,7 @@ class Route(BaseModel):
     filled_size: float
     alternatives: List[Alternative] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+    market_quality: Optional[MarketQuality] = None
 
 
 class StrikeNotFound(ValueError):
@@ -414,6 +416,7 @@ def price_route(request: RouteRequest, books: Sequence[Book],
         RouteError: no build is possible, e.g. no depth.
     """
     cfg = config or RouteConfig()
+    now = now or datetime.now(timezone.utc)
     cands = enumerate_candidates(request, books)
     size = request.size
 
@@ -461,6 +464,11 @@ def price_route(request: RouteRequest, books: Sequence[Book],
             if reason:
                 stale_warnings.append(f"{b.venue} {b.contract_id}: {reason}")
 
+    quality = assess_market_quality(best.fills, size, best.filled, stale_warnings, now)
+    if quality.findings:
+        details = "; ".join(dict.fromkeys(f.message for f in quality.findings))
+        warnings.append(f"Market quality ({quality.status}, {quality.risk_score}/100): {details} "
+                        "Advisory assessment of visible quotes only.")
     total = round(best.effective, 6)
     return Route(
         legs=[_leg(f) for f in best.fills],
@@ -480,6 +488,7 @@ def price_route(request: RouteRequest, books: Sequence[Book],
         filled_size=best.filled,
         alternatives=alts,
         warnings=warnings,
+        market_quality=quality,
     )
 
 
