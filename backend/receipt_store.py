@@ -27,6 +27,9 @@ from typing import Iterator, List, Optional
 DEFAULT_DB = os.path.join("data", "receipts.db")
 
 _SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS route_evidence (
+        snapshot TEXT PRIMARY KEY, observed_at TEXT NOT NULL, mode TEXT NOT NULL,
+        savings_usd DOUBLE PRECISION, data TEXT NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS receipts (
         route_id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -88,6 +91,19 @@ class ReceiptStore(MutableMapping):
         with self._lock:
             cur = self._connect().execute(sql, params)
             return cur.fetchall() if fetch else None
+
+    def record_route(self, snapshot: str, observed_at: str, mode: str,
+                     savings_usd: Optional[float], evidence: dict) -> None:
+        self._exec("INSERT INTO route_evidence (snapshot, observed_at, mode, savings_usd, data) "
+                   "VALUES (?, ?, ?, ?, ?) ON CONFLICT(snapshot) DO NOTHING",
+                   (snapshot, observed_at, mode, savings_usd, json.dumps(evidence)))
+
+    def savings_summary(self) -> dict:
+        count, average, largest = self._exec(
+            "SELECT COUNT(*), AVG(savings_usd), MAX(savings_usd) FROM route_evidence "
+            "WHERE mode='live' AND savings_usd IS NOT NULL", fetch=True)[0]
+        return {"observations": count, "average_estimated_savings_usd": average,
+                "largest_estimated_savings_usd": largest}
 
     def close(self) -> None:
         """Close the connection (it reopens on next use)."""

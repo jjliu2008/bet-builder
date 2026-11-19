@@ -1,0 +1,21 @@
+# Render Blueprint for the FastAPI backend (chain + receipts included).
+# Secrets (SOLANA_KEYPAIR) are set in the Render dashboard, never in this file.
+services:
+  - type: web
+    name: bet-builder-api
+    runtime: python
+    plan: free            # free sleeps after ~15 min idle and has no persistent disk
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.2
+      - key: ALLOWED_ORIGINS
+        value: https://bet-builder-frontend.vercel.app
+      - key: SOLANA_RPC_URL
+        value: https://api.devnet.solana.com
+      - key: RECEIPTS_DB
+        value: /tmp/receipts.db   # on a paid plan add a disk and point this at it, e.g. /var/data/receipts.db
+      - key: SOLANA_KEYPAIR
+        sync: false             # paste the devnet key (JSON array) in the dashboard

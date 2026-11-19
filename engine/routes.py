@@ -18,7 +18,7 @@ from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .books import Book, Fill, Side, cost_to_buy, expiry_key, iso
-from .market_quality import MarketQuality, assess_market_quality
+from .market_quality import MarketQuality, QuoteHistory, assess_market_quality
 from .fairvalue import (MIN_FAIR_HOURS, OPTIONS_HIGHER_THRESHOLD, OPTIONS_LOWER_THRESHOLD, fair_hidden,
                         verdict)
 
@@ -86,6 +86,8 @@ class RouteConfig(BaseModel):
             verdict_code="unavailable"). Default 2.
     """
     round_fees: bool = True
+    require_common_settlement: bool = False
+    exclude_crossed_books: bool = False
     higher_threshold: float = OPTIONS_HIGHER_THRESHOLD
     lower_threshold: float = OPTIONS_LOWER_THRESHOLD
     min_fair_hours: float = MIN_FAIR_HOURS
@@ -137,6 +139,7 @@ class Route(BaseModel):
     filled_size: float
     alternatives: List[Alternative] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+    grok_snapshot: Optional[str] = None
     market_quality: Optional[MarketQuality] = None
 
 
@@ -389,7 +392,8 @@ def _leg(f: Fill) -> Leg:
 def price_route(request: RouteRequest, books: Sequence[Book],
                 fair_fn: Optional[Callable[[RouteRequest], Optional[float]]] = None,
                 stale_fn: Optional[Callable[[Book], Optional[str]]] = None,
-                config: Optional[RouteConfig] = None, now: Optional[datetime] = None) -> Route:
+                config: Optional[RouteConfig] = None, now: Optional[datetime] = None,
+                quote_history: QuoteHistory | None = None) -> Route:
     """Price the cheapest way to build `request` from `books`.
 
     Args:
@@ -417,7 +421,37 @@ def price_route(request: RouteRequest, books: Sequence[Book],
     """
     cfg = config or RouteConfig()
     now = now or datetime.now(timezone.utc)
+    excluded = []
+    if cfg.exclude_crossed_books:
+        relevant = [b for b in books if b.asset.upper() == request.asset.upper()
+                    and expiry_key(b.expiry) == expiry_key(request.expiry)]
+        excluded = [b for b in relevant if b.best_bid is not None and
+                    b.best_ask is not None and b.best_bid > b.best_ask]
+        if excluded:
+            books = [b for b in relevant if b not in excluded]
+            if not books:
+                raise RouteError("Every matching book has a bid above its ask.")
     cands = enumerate_candidates(request, books)
+    if cfg.require_common_settlement:
+        compatible = []
+        for candidate in cands:
+            if len(candidate.components) == 1:
+                compatible.append(candidate)
+                continue
+            # A synthetic payoff requires each leg to observe the same reference
+            # at the same instant, including seconds omitted from the API expiry key.
+            groups = [{(b.settlement_index.strip(), b.expiry) for b in comp.books
+                       if b.settlement_index.strip()} for comp in candidate.components]
+            for terms in sorted(set.intersection(*groups)):
+                components = [
+                    _Component(side=comp.side, books=[b for b in comp.books
+                               if (b.settlement_index.strip(), b.expiry) == terms])
+                    for comp in candidate.components
+                ]
+                compatible.append(candidate.model_copy(update={"components": components}))
+        if not compatible:
+            raise RouteError("No construction has compatible settlement references and expiry times")
+        cands = compatible
     size = request.size
 
     priced = [p for c in cands if (p := _price_candidate(c, size, cfg.round_fees))]
@@ -449,7 +483,7 @@ def price_route(request: RouteRequest, books: Sequence[Book],
                                 cash_outlay=round(p.cash, 6), filled_size=p.filled,
                                 complete=p.filled >= size - _EPS))
 
-    warnings: List[str] = []
+    warnings = [f"Excluded crossed book: {b.venue} {b.contract_id}." for b in excluded]
     if best.filled < size - _EPS:
         warnings.append(f"Only {best.filled:g} of {size:g} contracts are fillable from visible depth")
     if best.effective >= 1.0 - _EPS:
@@ -464,7 +498,7 @@ def price_route(request: RouteRequest, books: Sequence[Book],
             if reason:
                 stale_warnings.append(f"{b.venue} {b.contract_id}: {reason}")
 
-    quality = assess_market_quality(best.fills, size, best.filled, stale_warnings, now)
+    quality = assess_market_quality(best.fills, size, best.filled, stale_warnings, now, peers=books, history=quote_history)
     if quality.findings:
         details = "; ".join(dict.fromkeys(f.message for f in quality.findings))
         warnings.append(f"Market quality ({quality.status}, {quality.risk_score}/100): {details} "
@@ -479,7 +513,7 @@ def price_route(request: RouteRequest, books: Sequence[Book],
         fair_value=None if fair is None else round(fair, 6),
         **verdict(total, fair, cfg.higher_threshold, cfg.lower_threshold, too_close=too_close),
         stale_warnings=stale_warnings,
-        mixed_settlement_index=len(best.venues) > 1,
+        mixed_settlement_index=len({f.book.settlement_index.strip() for f in best.fills}) > 1,
         timestamp=iso(now or datetime.now(timezone.utc)),
         build=best.cand.build,
         cash_outlay=round(best.cash, 6),

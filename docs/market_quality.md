@@ -1,11 +1,9 @@
 # Supporting market-quality stage
 
-The route engine prices the requested payoff first. It then assesses only the
-books used by the selected route. Fair-value pricing and stale detection remain
-separate stages. The existing frontend warning component renders non-clear
-findings through `route.warnings`; no frontend deployment is required for the
-response shape, but a running frontend must point at the locally changed backend
-to see these changes. The deployed backend has not been changed.
+The route API screens crossed books before pricing. After pricing it assesses the
+selected fills using visible depth, comparable quotes and available history.
+The route card shows structured findings. Older clients can read the warning
+summary.
 
 The original risk foundation is reworked for market evidence. Reused primitives
 provide validated scores, exact decimal rounding and decision thresholds.
@@ -22,7 +20,7 @@ revision are recorded in `engine/market_risk_core/SOURCE.md`.
   "risk_score": 35,
   "advisory_only": true,
   "evaluated_at": "2026-11-17T12:00:00Z",
-  "methodology": "visible_book_rules_v1",
+  "methodology": "visible_book_rules_v2",
   "unavailable_signals": [
     "market_trained_anomaly_model", "market_threat_memory", "semantic_triage"
   ],
@@ -81,3 +79,21 @@ one-sided books, partial depth, missing settlement evidence, multi-venue routing
 stale findings, score boundaries, invalid numeric scores, unchanged route prices
 and API serialization. Tests use prepared data and do not submit trades or
 anchor transactions onchain.
+
+
+### Route screening and equity scenarios
+
+The API removes crossed books before comparing routes. If all matching books are
+crossed it returns 422. The assessment of the remaining fills stays advisory.
+The engine also reports a 5-cent average depth premium, a 15-cent midpoint
+difference between fresh books with identical settlement terms, and unusual
+midpoint movement against at least five distinct observations in the preceding
+ten minutes. A move must reach both 10 cents and four median absolute deviations.
+These thresholds are provisional.
+
+AAPL and NVDA use fixed synthetic stock-price outcome books. The demo clock is
+November 19, 2026 at 15:00 UTC, with settlement November 20 at 21:00 UTC.
+Apple strikes are $220/$230 and NVIDIA strikes are $170/$180. Use the standard
+expiries, ladder and route endpoints with the ticker as the asset. BTC uses its
+existing data source. Stock scenarios have illustrative fees, no independent
+options benchmark and no live venue listing or tokenized-share ownership.

@@ -116,3 +116,69 @@ def test_reused_fusion_keeps_half_up_rounding_and_rejects_nan():
     assert engine.deterministic_score(0, 0.545, 0) == 55
     with pytest.raises(ValueError):
         engine.deterministic_score(0, float("nan"), 0)
+
+
+@pytest.mark.parametrize("symbol,lo,hi", [("AAPL", 220, 230), ("NVDA", 170, 180)])
+def test_stock_scenario_isolated_from_btc_feed(symbol, lo, hi):
+    from backend.app import create_app
+    from backend.ingest.poller import State
+
+    client = TestClient(create_app(state=State(now=lambda: NOW)))
+    expiry, = client.get("/expiries", params={"asset": symbol}).json()
+    result = client.post("/route", json={"asset": symbol, "expiry": expiry,
+        "type": "between", "lo": lo, "hi": hi, "size": 10})
+    assert result.status_code == 200, result.text
+    route = result.json()
+    assert all(symbol in leg["contract"] for leg in route["legs"])
+    assert route["market_quality"]["status"] == "clear"
+    assert route["fair_value"] is None and "synthetic" in route["warnings"][-1]
+    assert client.get("/expiries?asset=BTC").status_code == 503
+
+
+def test_divergence_requires_matching_settlement_and_fresh_peer():
+    selected = book()
+    peer = mk("kalshi", 68000, bids=[(0.69, 20)], asks=[(0.71, 20)]).model_copy(
+        update={"updated": NOW, "settlement_index": selected.settlement_index})
+    fill = cost_to_buy(selected, "YES", 10)
+    for other, expected in [(peer, True), (peer.model_copy(update={"asset": "AAPL"}), False),
+                            (peer.model_copy(update={"updated": NOW-timedelta(minutes=3)}), False)]:
+        quality = assess_market_quality([fill], 10, 10, [], NOW, [other])
+        assert ("VENUE_DIVERGENCE" in codes(quality)) == expected
+
+
+def test_depth_slippage_uses_average_fill_price():
+    b = mk("gemini", 68000, bids=[(0.48, 100)], asks=[(0.50, 1), (0.62, 20)])
+    assert "DEPTH_SLIPPAGE" in codes(assess(b.model_copy(update={"updated": NOW})))
+
+
+def test_crossed_book_exclusion_reprices_against_remaining_depth():
+    from engine.routes import RouteConfig, RouteError
+
+    crossed = mk("gemini", 68000, bids=[(0.70, 50)], asks=[(0.30, 50)])
+    valid = mk("kalshi", 68000, bids=[(0.46, 50)], asks=[(0.50, 50)])
+    req = RouteRequest(expiry=EXP_KEY, type="above", lo=68000, size=10)
+    config = RouteConfig(exclude_crossed_books=True)
+    route = price_route(req, [crossed, valid], config=config, now=NOW)
+    assert [leg.venue for leg in route.legs] == ["kalshi"]
+    assert any("Excluded crossed book" in w for w in route.warnings)
+    with pytest.raises(RouteError, match="Every matching book"):
+        price_route(req, [crossed], config=config, now=NOW)
+
+
+def test_historical_shift_needs_five_prior_observations():
+    b = book()
+    fill = cost_to_buy(b, "YES", 10)
+    points = [(NOW - timedelta(seconds=i), 0.25) for i in range(1, 6)]
+    for history, expected in [(points, True), (points[1:], False), (points[:1]*5, False)]:
+        result = assess_market_quality([fill], 10, 10, [], NOW, history={b.contract_id: history})
+        assert ("MIDPOINT_SHIFT" in codes(result)) == expected
+
+
+def test_api_policy_requires_compatible_settlement_for_synthetic_payoff():
+    from engine.routes import RouteConfig, RouteError
+
+    a = mk("gemini", 66000, bids=[(.65, 50)], asks=[(.67, 50)])
+    b = mk("kalshi", 68000, bids=[(.45, 50)], asks=[(.47, 50)])
+    req = RouteRequest(expiry=EXP_KEY, type="between", lo=66000, hi=68000)
+    with pytest.raises(RouteError, match="compatible settlement"):
+        price_route(req, [a, b], config=RouteConfig(require_common_settlement=True))

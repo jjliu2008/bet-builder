@@ -55,7 +55,12 @@ For usage, units, and the math, see `engine/README.md`.
    This supporting stage reworks the earlier risk-scoring foundation (AEGIS) for
    prediction markets. It checks quote age, crossed or wide spreads, one-sided
    books, partial fills, settlement labels, expiry and existing stale signals.
-   It is advisory: it does not change routing, prices, or submit trades.
+   The API excludes crossed books before routing. The route card explains the
+   remaining findings, including price divergence, historical shifts and depth slippage.
+
+The asset picker reads real AAPLx and NVDAx last trades from Kraken. It also includes synthetic AAPL and NVDA stock-price scenarios.
+For a reproducible demo, select Apple, keep the $220–$230 range and build ten
+contracts. Increase the size to 150 to see the partial-depth assessment.
 
 See `docs/market_quality.md` for scoring, limitations and local validation commands.
 

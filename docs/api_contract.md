@@ -252,4 +252,28 @@ Rule (a) needs at least `frozen_window_s` (default 5 min) of history, so poll at
 `advisory_only`, `evaluated_at`, `methodology`, `unavailable_signals`, and
 `findings` (code, message, score, optional venue and contract).
 Findings are also summarized in the existing `warnings` array for frontend
-compatibility. Routing and pricing are unchanged. See [market_quality.md](market_quality.md).
+compatibility. The API excludes crossed books before pricing. AAPL and NVDA use fixed synthetic scenarios. See [market_quality.md](market_quality.md).
+
+### Independent fair-value lookup
+
+`GET /fair-value` accepts the route request fields as query parameters. It uses
+the same cached options surface and near-expiry cutoff as route pricing. A null
+`fair_value` includes a human-readable `reason`.
+
+### Tokenized equity trades
+
+`GET /rwas/AAPLx` and `GET /rwas/NVDAx` return the last reported USD trade,
+exchange timestamp and issuer link. An unavailable trade returns HTTP 503.
+
+### Route explanations and evidence
+
+`POST /grok/explain` accepts the route's `grok_snapshot` and a `topic` of
+`construction`, `depth` or `quality`. The server supplies the stored snapshot
+to xAI. Expired snapshots return 404, capacity limits return 429, and an
+unconfigured or unavailable provider returns 503.
+
+`GET /savings` summarizes estimated savings per recorded live route observation.
+Full-size observations require a common known settlement reference across the
+available books and a single-venue benchmark. Repeated requests in the same
+poll are counted once. Replay and equity scenarios are excluded. Use a
+persistent database to retain evidence across deployments.

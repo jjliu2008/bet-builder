@@ -4,13 +4,17 @@ Scores describe visible quote quality, never profitability or fraud probability.
 Wallet-trained anomaly and similarity models are deliberately disabled.
 """
 from datetime import datetime
-from typing import List, Literal, Sequence
+from statistics import median
+from typing import List, Literal, Mapping, Sequence
+
 
 from pydantic import BaseModel, Field
 
-from .books import Fill, iso, to_utc
+from .books import Book, Fill, iso, to_utc
 from .market_risk_core.fusion import RiskFusionEngine
 from .market_risk_core.policy import PolicyEngine
+
+QuoteHistory = Mapping[str, Sequence[tuple[datetime, float]]]
 
 
 class QualityFinding(BaseModel):
@@ -27,13 +31,14 @@ class MarketQuality(BaseModel):
     advisory_only: bool = True
     evaluated_at: str
     findings: List[QualityFinding] = Field(default_factory=list)
-    methodology: str = "visible_book_rules_v1"
+    methodology: str = "visible_book_rules_v2"
     unavailable_signals: List[str] = Field(default_factory=lambda: [
         "market_trained_anomaly_model", "market_threat_memory", "semantic_triage"])
 
 
 def assess_market_quality(fills: Sequence[Fill], requested: float, filled: float,
-                          stale_warnings: Sequence[str], now: datetime) -> MarketQuality:
+                          stale_warnings: Sequence[str], now: datetime,
+                          peers: Sequence[Book] = (), history: QuoteHistory | None = None) -> MarketQuality:
     """Assess only selected books; worst evidence determines the route's band.
 
     Evidence thresholds are provisional: age >60s caution, >120s unreliable;
@@ -72,6 +77,31 @@ def assess_market_quality(fills: Sequence[Fill], requested: float, filled: float
             indexes.add(book.settlement_index.strip())
         else:
             add("UNKNOWN_SETTLEMENT", "Settlement index is not supplied for this book.", 55, book)
+        if history and book.mid is not None and -5 <= age <= 60 and bid <= ask:
+            previous = {ts: value for ts, value in history.get(book.contract_id, ())
+                        if 0 < (book.updated - ts).total_seconds() <= 600 and 0 <= value <= 1}
+            if len(previous) >= 5:
+                baseline = median(previous.values())
+                deviation = median(abs(value - baseline) for value in previous.values())
+                if abs(book.mid - baseline) >= max(0.10, 4 * deviation):
+                    add("MIDPOINT_SHIFT", f"Current midpoint differs from the recent median "
+                        f"by {abs(book.mid-baseline)*100:.1f} cents.", 35, book)
+        if book.mid is not None and bid <= ask and -5 <= age <= 60 and book.settlement_index.strip():
+            for peer in peers:
+                if (peer.venue == book.venue or peer.asset != book.asset or
+                    (peer.expiry, peer.lo, peer.hi, peer.settlement_index) !=
+                    (book.expiry, book.lo, book.hi, book.settlement_index)):
+                    continue
+                peer_age = (now - peer.updated).total_seconds()
+                if (peer.mid is not None and peer.best_bid <= peer.best_ask and -5 <= peer_age <= 60
+                        and abs(book.mid - peer.mid) >= 0.15 - 1e-9):
+                    add("VENUE_DIVERGENCE", f"Midpoints differ by {abs(book.mid-peer.mid)*100:.1f} cents "
+                        f"against {peer.venue} for the same settlement terms.", 55, book)
+                    break
+    for fill in fills:
+        levels = fill.levels
+        if levels and fill.avg_price - levels[0][0] >= 0.05 - 1e-9:
+            add("DEPTH_SLIPPAGE", "Average fill costs at least 5 cents more than the best level.", 55, fill.book)
     if len(indexes) > 1:
         add("SETTLEMENT_DIFFERENCE", "Selected contracts use different settlement indexes.", 35)
     if filled < requested - 1e-9:

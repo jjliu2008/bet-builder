@@ -35,3 +35,9 @@ deployed frontend origin. Never put secrets in `NEXT_PUBLIC_*` variables.
   for example when the server has no chain module or devnet keypair. In that case the UI shows
   "Receipt pending", and the route stays usable.
 - `/verify/{route_id}` returns `{status: "verified" | "mismatch" | "pending", hash, signature, explorer_url, detail}`.
+
+Route cards can request a Grok explanation of a server-priced snapshot. Set
+`XAI_API_KEY` on the FastAPI service. Optional `XAI_MODEL` defaults to
+`grok-4.3`. Only an explicit question calls the provider. The service keeps
+the most recent 256 snapshots per process and allows 12 explanations per minute
+per process. A restart expires the snapshots. Use one worker for this deployment.
