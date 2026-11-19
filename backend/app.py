@@ -173,6 +173,13 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
 
     # The handlers are `async def` so they run on the event loop, where the poller also writes
     # the state. That keeps every read consistent without locks.
+    @app.get("/release")
+    async def release() -> dict:
+        return {"revision": os.getenv("RENDER_GIT_COMMIT"),
+                "grok_key_configured": bool(os.getenv("XAI_API_KEY")),
+                "solana_signer_configured": bool(getattr(chain, "signer_pubkey", lambda: None)()),
+                "receipt_storage": getattr(store, "backend", "unknown")}
+
     @app.get("/health")
     async def health() -> dict:
         """Always HTTP 200 while the process is up; read `status` for data health."""
