@@ -72,25 +72,36 @@ export default function AssetBuilder() {
           ))}
         </div>
       </section>
-      {asset.endsWith("x") ? <TokenQuote key={asset} symbol={asset} /> : <Builder key={asset} asset={asset} />}
+      {asset !== "BTC" ? <TokenQuote key={asset} symbol={asset} /> : <Builder key={asset} asset={asset} />}
     </>
   );
 }
 
 const ASSET_GROUPS = [
-  { title: "Live", hint: "Gemini × Kalshi books, Deribit fair value", pill: "pill-good", items: [{ value: "BTC", label: "Bitcoin" }] },
+  { title: "Prediction routes", hint: "Gemini × Kalshi books, Deribit fair value", pill: "pill-good", items: [{ value: "BTC", label: "Bitcoin (BTC)" }] },
   {
-    title: "Simulation",
-    hint: "illustrative stock books",
-    pill: "pill-warn",
+    title: "Stocks",
+    hint: "regular-session price",
+    pill: "",
     items: [
-      { value: "AAPL", label: "Apple (AAPL)" },
-      { value: "NVDA", label: "NVIDIA (NVDA)" },
+      { value: "AAPL", label: "Apple" },
+      { value: "NVDA", label: "NVIDIA" },
+      { value: "MSFT", label: "Microsoft" },
+      { value: "TSLA", label: "Tesla" },
     ],
   },
   {
-    title: "Price only",
-    hint: "tokenized stock spot price",
+    title: "Crypto",
+    hint: "USD spot",
+    pill: "",
+    items: [
+      { value: "ETH", label: "Ethereum" },
+      { value: "SOL", label: "Solana" },
+    ],
+  },
+  {
+    title: "Tokenized stocks",
+    hint: "xStocks",
     pill: "",
     items: [
       { value: "AAPLx", label: "AAPLx" },
@@ -135,11 +146,6 @@ function Builder({ asset }: { asset: string }) {
 
   return (
     <>
-      <header className="mb-6">
-        {asset !== "BTC" &&
-          <p className="note note-warn">Stock-price prediction demo using simulated books as of November 19, 2026 at 15:00 UTC. All prices and sizes are illustrative.</p>}
-      </header>
-
       {expErr && (
         <div role="alert" className="note note-bad mb-6 flex flex-wrap items-center justify-between gap-3">
           <span>

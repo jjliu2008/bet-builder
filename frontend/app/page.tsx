@@ -14,7 +14,7 @@ export default function Home() {
           </h1>
           <p className="muted max-w-2xl text-lg">
             Pick an outcome, like BTC finishing between two prices. We assemble it from the cheapest mix of Gemini and Kalshi contracts, check
-            it against Deribit options, flag risky quotes, and anchor a receipt on Solana. Stock outcomes run as a labeled simulation.
+            it against Deribit options, flag risky quotes, and anchor a receipt on Solana. Stocks and other crypto show live reference prices.
           </p>
           <div className="flex flex-wrap gap-3 text-sm">
             <Link href="/maker" className="btn-outline">
