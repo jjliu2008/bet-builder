@@ -1,14 +1,15 @@
 import type { Route, RouteRequest, VerdictCode } from "@/lib/types";
 import { buildLabel, cents, expiryLabel, num, pct, usd, venueName } from "@/lib/format";
+import GrokExplanation from "./GrokExplanation";
 import Warnings from "./Warnings";
 import SaveVerify from "./SaveVerify";
 import MarketQualityPanel from "./MarketQualityPanel";
 
 function describe(r: RouteRequest): string {
   const e = expiryLabel(r.expiry);
-  if (r.type === "above") return `BTC at or above ${usd(r.lo ?? r.hi ?? 0, 0)} at ${e}`;
-  if (r.type === "below") return `BTC below ${usd(r.hi ?? r.lo ?? 0, 0)} at ${e}`;
-  return `BTC between ${usd(r.lo ?? 0, 0)} and ${usd(r.hi ?? 0, 0)} at ${e}`;
+  if (r.type === "above") return `${r.asset} at or above ${usd(r.lo ?? r.hi ?? 0, 0)} at ${e}`;
+  if (r.type === "below") return `${r.asset} below ${usd(r.hi ?? r.lo ?? 0, 0)} at ${e}`;
+  return `${r.asset} between ${usd(r.lo ?? 0, 0)} and ${usd(r.hi ?? 0, 0)} at ${e}`;
 }
 
 const VERDICT_STYLE: Record<VerdictCode, { cls: string; label: string }> = {
@@ -111,7 +112,7 @@ export default function RouteCard({ route, request }: { route: Route; request: R
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-line pt-4">
         <Stat label="Effective cost" value={cents(route.total_cost)} sub="per $1 of payout" />
-        <Stat label="Options fair value" value={route.fair_value === null ? "n/a" : pct(route.fair_value)} sub="Deribit-implied" />
+        <Stat label="Options fair value" value={route.fair_value === null ? "n/a" : pct(route.fair_value)} sub={request.asset === "BTC" ? "Deribit-implied" : "No equity options feed"} />
         <Stat
           label="Best single venue"
           value={route.best_single_venue_cost === null ? "n/a" : cents(route.best_single_venue_cost)}
@@ -126,7 +127,8 @@ export default function RouteCard({ route, request }: { route: Route; request: R
 
       {route.market_quality && <MarketQualityPanel mq={route.market_quality} />}
       <Warnings route={route} />
-      <SaveVerify route={route} request={request} />
+      {route.grok_snapshot && <GrokExplanation key={route.grok_snapshot} snapshot={route.grok_snapshot} />}
+      {request.asset === "BTC" && <SaveVerify route={route} request={request} />}
 
       <p className="muted text-xs">
         Analysis only. Fair value is a risk-neutral options estimate, not a guarantee of profit. Nothing is traded for you.

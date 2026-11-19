@@ -49,6 +49,21 @@ For usage, units, and the math, see `engine/README.md`.
    - didn't move while BTC did, or
    - disagree with fair while the other venue agrees.
 
+6. **Market quality.** After pricing, `engine.market_quality` assesses the selected
+   route's visible quote evidence. It returns a structured `market_quality` field
+   and adds findings to the existing `warnings` list displayed by the frontend.
+   This supporting stage reworks the earlier risk-scoring foundation (AEGIS) for
+   prediction markets. It checks quote age, crossed or wide spreads, one-sided
+   books, partial fills, settlement labels, expiry and existing stale signals.
+   The API excludes crossed books before routing. The route card explains the
+   remaining findings, including price divergence, historical shifts and depth slippage.
+
+The asset picker reads real AAPLx and NVDAx last trades from Kraken. It also includes synthetic AAPL and NVDA stock-price scenarios.
+For a reproducible demo, select Apple, keep the $220–$230 range and build ten
+contracts. Increase the size to 150 to see the partial-depth assessment.
+
+See `docs/market_quality.md` for scoring, limitations and local validation commands.
+
 See `engine/README.md` for the math and known limits.
 
 ## Hackathon submission checklist

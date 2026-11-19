@@ -37,6 +37,7 @@ export interface Alternative {
 }
 
 export interface Route {
+  grok_snapshot?: string | null;
   legs: Leg[];
   total_cost: number;
   max_payout: number;

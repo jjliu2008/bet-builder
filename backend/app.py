@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 from typing import List, Optional
 
@@ -33,15 +34,19 @@ from fastapi.responses import JSONResponse
 
 from engine import (Book, Route, RouteError, RouteRequest, StrikeNotFound, build_ladder, expiry_key,
                     fair_above, make_fair_fn, price_route)
+from engine.fairvalue import fair_for_request, fair_hidden
+from engine.routes import RouteConfig
 from engine.stale import make_stale_fn, stale_flags
 
+from . import equity_demo, xstocks
+from .grok import RouteExplainer
 from .ingest.poller import Poller, Settings, State
 from .logger import LogSettings, SnapshotLogger
 from .receipt_store import ReceiptStore
-from .receipts import load_chain, make_router, retry_pending
+from .receipts import fingerprint, load_chain, make_router, retry_pending
 from .replay import Replayer
 
-SUPPORTED_ASSETS = ("BTC",)
+SUPPORTED_ASSETS = ("BTC", *equity_demo.STRIKES)
 
 
 class Unavailable(RuntimeError):
@@ -105,6 +110,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     if present; without it, receipts are issued with status "pending".
     `receipt_store` defaults to a `ReceiptStore` (DATABASE_URL Postgres, else SQLite at RECEIPTS_DB).
     """
+    route_config = RouteConfig(exclude_crossed_books=True, require_common_settlement=True)
     chain = chain if chain is not None else load_chain()
     store = receipt_store if receipt_store is not None else ReceiptStore()
     if state is None and poller is None and replayer is None:
@@ -145,6 +151,9 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
                 await runner.aclose()
 
     app = FastAPI(title="bet-builder", version="0.1.0", lifespan=lifespan)
+    explainer = RouteExplainer()
+    app.post("/grok/explain")(explainer.explain)
+    app.include_router(xstocks.router)
     app.state.store = state
     app.state.poller = poller
     app.state.replayer = replayer
@@ -169,30 +178,89 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
         """Always HTTP 200 while the process is up; read `status` for data health."""
         return state.health()
 
+    def equity_books(asset: str, expiry: str):
+        try:
+            key = expiry_key(expiry)
+        except ValueError:
+            raise HTTPException(422, "Invalid expiry")
+        if key != equity_demo.EXPIRY:
+            raise HTTPException(404, f"No demo books for {asset} at {key}")
+        return equity_demo.books_for(asset)
+
     @app.get("/expiries")
     async def expiries(asset: str = Query("BTC")) -> List[str]:
-        _asset(asset)
+        if _asset(asset) in equity_demo.STRIKES:
+            return [equity_demo.EXPIRY]
         _ready(state)
         return state.live_expiries
 
     @app.get("/ladder")
     async def ladder(expiry: str, asset: str = Query("BTC")) -> List[dict]:
-        _asset(asset)
+        asset = _asset(asset)
+        if asset in equity_demo.STRIKES:
+            return build_ladder(equity_books(asset, expiry), asset, expiry, now=equity_demo.AS_OF)
         key, books = _books(state, expiry)
         fair, now = _fair(state, key, books), state.now()
         flags = stale_flags(books, key, fair, state.history.as_mapping(), state.spot_history, now)
         return build_ladder(books, state.asset, key, fair, flags, now)
 
+    @app.get("/fair-value")
+    async def fair_value(request: RouteRequest = Query()) -> dict:
+        asset = _asset(request.asset)
+        if asset in equity_demo.STRIKES:
+            equity_books(asset, request.expiry)
+            return {"fair_value": None, "reason": "No equity options benchmark"}
+        _books(state, request.expiry)
+        if fair_hidden(request.expiry, state.now()):
+            return {"fair_value": None, "reason": "Too close to expiry"}
+        value = (fair_for_request(request.model_copy(update={"asset": asset}), state.surface)
+                 if state.surface is not None else None)
+        return {"fair_value": round(value, 6) if value is not None else None, "reason": None if value is not None else "Options surface unavailable"}
+
     @app.post("/route", response_model=Route)
     async def route(body: RouteRequest) -> Route:
         body = body.model_copy(update={"asset": _asset(body.asset)})
+        if body.asset in equity_demo.STRIKES:
+            result = price_route(body, equity_books(body.asset, body.expiry), now=equity_demo.AS_OF, config=route_config)
+            result.warnings.append("Stock scenario uses synthetic venue quotes and illustrative fees.")
+            result.grok_snapshot = explainer.remember(body, result)
+            return result
         key, books = _books(state, body.expiry)
         fair, now = _fair(state, key, books), state.now()
-        return price_route(
+        history = state.history.as_mapping()
+        result = price_route(
             body, books,
             fair_fn=make_fair_fn(state.surface) if state.surface is not None else None,
-            stale_fn=make_stale_fn(books, key, fair, state.history.as_mapping(), state.spot_history, now),
-            now=now)
+            stale_fn=make_stale_fn(books, key, fair, history, state.spot_history, now),
+            now=now, config=route_config, quote_history=history)
+
+        result.grok_snapshot = explainer.remember(body, result)
+        if hasattr(store, "record_route"):
+            selected = {(leg.venue, leg.contract) for leg in result.legs}
+            quotes = [book.model_dump(mode="json") for book in books
+                      if (book.venue, book.contract_id) in selected]
+            refs = {q["settlement_index"].strip() for q in quotes}
+            # Only measure savings when every candidate book has the same known
+            # settlement and the full requested quantity can be compared.
+            benchmark_refs = {b.settlement_index.strip() for b in books}
+            comparable = (result.filled_size == body.size and result.savings is not None
+                          and len(refs) == 1 and "" not in refs and benchmark_refs == refs)
+            observed = state.last_poll.isoformat() if state.last_poll else result.timestamp
+            query = body.model_dump(mode="json")
+            evidence_id = fingerprint(query, {"poll": observed, "mode": state.mode})
+            evidence = {"request": query, "route": result.model_dump(), "selected_books": quotes}
+            try:
+                await asyncio.to_thread(store.record_route, evidence_id, observed, state.mode,
+                                        result.savings * result.filled_size if comparable else None, evidence)
+            except Exception:
+                logging.getLogger(__name__).exception("Route evidence write failed")
+        return result
+
+    @app.get("/savings")
+    async def savings_summary() -> dict:
+        if not hasattr(store, "savings_summary"):
+            raise Unavailable("Route evidence storage unavailable")
+        return await asyncio.to_thread(store.savings_summary)
 
     if chain is not None and getattr(chain, "router", None) is not None:
         app.include_router(chain.router)

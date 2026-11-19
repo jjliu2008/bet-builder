@@ -54,7 +54,9 @@ def _parse_body(body: Any) -> tuple:
         raise HTTPException(422, "Body must be a JSON object: {request, route} or a route")
     raw_route, raw_req = (body["route"], body.get("request")) if "route" in body else (body, None)
     try:
-        route = Route.model_validate(raw_route).model_dump(mode="json")
+        route = Route.model_validate(raw_route).model_dump(mode="json", exclude={"grok_snapshot"})
+        if "market_quality" not in raw_route:
+            route.pop("market_quality", None)
         request = RouteRequest.model_validate(raw_req).model_dump(mode="json") if raw_req is not None else None
     except ValidationError as e:
         raise HTTPException(422, f"Not a valid route receipt body: {e.errors()[0].get('msg', 'invalid')}")

@@ -58,3 +58,13 @@ export const postRoute = (body: RouteRequest) =>
 export const postReceipt = (route: Route, req: RouteRequest) =>
   request<Receipt>("/receipt", { method: "POST", body: JSON.stringify({ request: req, route }) });
 export const getVerify = (routeId: string) => request<Verification>(`/verify/${encodeURIComponent(routeId)}`);
+
+export const getTokenQuote = (symbol: string) =>
+  request<{ price_usd: number; traded_at: string; source: string; issuer_url: string }>(
+    `/rwas/${encodeURIComponent(symbol)}`
+  );
+
+export const explainRoute = (snapshot: string, topic: string) =>
+  request<{ answer: string; model: string; timestamp: string }>("/grok/explain", {
+    method: "POST", body: JSON.stringify({ snapshot, topic }),
+  });

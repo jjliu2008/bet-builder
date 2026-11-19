@@ -11,7 +11,7 @@ export default function Warnings({ route }: { route: Route }) {
   if (route.mixed_settlement_index)
     items.push({
       kind: "warn",
-      text: "Legs settle on different indexes (Gemini's own index vs. Kalshi's CF Benchmarks BRTI). Outcomes can differ near the boundary.",
+      text: "Legs have different settlement references. Outcomes can differ near the boundary.",
     });
   if (route.filled_size !== undefined && route.size !== undefined && route.filled_size < route.size)
     items.push({ kind: "bad", text: `Only ${route.filled_size} of ${route.size} contracts can be filled from visible depth.` });
