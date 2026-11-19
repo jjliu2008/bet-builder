@@ -6,15 +6,15 @@ export default function Home() {
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-12">
       <header className="mb-10 grid gap-8 lg:grid-cols-[1fr_auto] lg:items-end">
         <div className="space-y-4">
-          <span className="pill pill-accent">BTC prediction markets · Gemini × Kalshi</span>
+          <span className="pill pill-accent">Prediction markets · Gemini × Kalshi · Solana receipts</span>
           <h1 className="text-4xl font-bold leading-[1.05] tracking-tight sm:text-5xl">
             Say the bet.
             <br />
             <span className="gradient-text">We build it cheaper.</span>
           </h1>
           <p className="muted max-w-2xl text-lg">
-            Pick a BTC outcome. We assemble it from the cheapest mix of Gemini and Kalshi contracts, check it against Deribit options, flag risky
-            quotes, and anchor a receipt on Solana.
+            Pick an outcome, like BTC finishing between two prices. We assemble it from the cheapest mix of Gemini and Kalshi contracts, check
+            it against Deribit options, flag risky quotes, and anchor a receipt on Solana. Stock outcomes run as a labeled simulation.
           </p>
           <div className="flex flex-wrap gap-3 text-sm">
             <Link href="/maker" className="btn-outline">

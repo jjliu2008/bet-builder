@@ -64,6 +64,19 @@ export const getTokenQuote = (symbol: string) =>
     `/rwas/${encodeURIComponent(symbol)}`
   );
 
+let grokProbe: Promise<boolean> | null = null;
+/**
+ * Whether the server has Grok configured. The backend checks for XAI_API_KEY before it looks up the
+ * snapshot, so an unknown snapshot returns 503 (not configured) or 404 (configured) without calling xAI.
+ * The answer is cached for the page's lifetime.
+ */
+export function grokAvailable(): Promise<boolean> {
+  grokProbe ??= explainRoute("0".repeat(64), "construction")
+    .then(() => true)
+    .catch((e) => !(e instanceof ApiError && (e.status === 503 || e.status === 0)));
+  return grokProbe;
+}
+
 export const explainRoute = (snapshot: string, topic: string) =>
   request<{ answer: string; model: string; timestamp: string }>("/grok/explain", {
     method: "POST", body: JSON.stringify({ snapshot, topic }),

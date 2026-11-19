@@ -87,9 +87,9 @@ export default function SiteHeader() {
           <span className="pill" title={venueTitle || undefined} aria-live="polite">
             <span className={`dot ${feed.state === "ok" ? "live-dot" : ""}`} style={{ background: s.color }} />
             <span style={{ color: s.color }}>{s.text}</span>
-            <span className="muted hidden md:inline">· Gemini · Kalshi · Deribit</span>
+            <span className="muted hidden xl:inline">· Gemini · Kalshi · Deribit</span>
           </span>
-          <span className="pill pill-accent hidden sm:inline-flex" title="Receipts are written to Solana devnet">
+          <span className="pill pill-accent hidden lg:inline-flex" title="Receipts are written to Solana devnet">
             ◎ Solana devnet
           </span>
         </div>

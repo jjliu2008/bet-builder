@@ -45,20 +45,59 @@ export default function AssetBuilder() {
   const [asset, setAsset] = useState("BTC");
   return (
     <>
-
-      <label className="my-4 block max-w-sm"><span className="label">Underlying asset</span>
-        <select className="input" value={asset} onChange={e => setAsset(e.target.value)}>
-          <option value="BTC">Bitcoin</option>
-          <option value="AAPLx">Apple xStock (AAPLx)</option>
-          <option value="NVDAx">NVIDIA xStock (NVDAx)</option>
-          <option value="AAPL">Apple (AAPL) · simulation</option>
-          <option value="NVDA">NVIDIA (NVDA) · simulation</option>
-        </select>
-      </label>
+      <section className="card mb-6 space-y-3 py-4 sm:py-4" aria-label="Underlying asset">
+        <span className="label">Underlying asset</span>
+        <div className="flex flex-wrap gap-x-6 gap-y-3">
+          {ASSET_GROUPS.map((g) => (
+            <div key={g.title} className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`pill ${g.pill}`}>{g.title}</span>
+                <span className="muted">{g.hint}</span>
+              </div>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={g.title}>
+                {g.items.map((it) => (
+                  <button
+                    key={it.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={asset === it.value}
+                    onClick={() => setAsset(it.value)}
+                    className={`seg ${asset === it.value ? "seg-on" : ""}`}
+                  >
+                    {it.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
       {asset.endsWith("x") ? <TokenQuote key={asset} symbol={asset} /> : <Builder key={asset} asset={asset} />}
     </>
   );
 }
+
+const ASSET_GROUPS = [
+  { title: "Live", hint: "Gemini × Kalshi books, Deribit fair value", pill: "pill-good", items: [{ value: "BTC", label: "Bitcoin" }] },
+  {
+    title: "Simulation",
+    hint: "illustrative stock books",
+    pill: "pill-warn",
+    items: [
+      { value: "AAPL", label: "Apple (AAPL)" },
+      { value: "NVDA", label: "NVIDIA (NVDA)" },
+    ],
+  },
+  {
+    title: "Price only",
+    hint: "tokenized stock spot price",
+    pill: "",
+    items: [
+      { value: "AAPLx", label: "AAPLx" },
+      { value: "NVDAx", label: "NVDAx" },
+    ],
+  },
+];
 
 function Builder({ asset }: { asset: string }) {
   const [expiries, setExpiries] = useState<string[]>([]);

@@ -21,6 +21,8 @@ export default function LadderPage() {
   const [expiry, setExpiry] = useState("");
   const [rows, setRows] = useState<LadderRow[] | null>(null);
   const [err, setErr] = useState<ApiError | null>(null);
+  const [onlyBoth, setOnlyBoth] = useState(true);
+  const shown = rows ? (onlyBoth ? rows.filter((r) => r.gemini && r.kalshi) : rows) : null;
 
   useEffect(() => {
     getExpiries()
@@ -48,19 +50,31 @@ export default function LadderPage() {
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:py-12 space-y-6">
-      <Link href="/" className="link text-sm">← Back to bet builder</Link>
-      <header className="space-y-1">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Strike ladder</h1>
-        <p className="muted text-sm">
-          Contract &ldquo;BTC ≥ strike&rdquo; on each venue, shown as bid / ask. Green marks the cheapest ask. Fair value is the Deribit-implied probability.
+      <header className="space-y-2">
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+          Strike <span className="gradient-text">ladder</span>
+        </h1>
+        <p className="muted max-w-2xl">
+          The contract &ldquo;BTC ≥ strike&rdquo; on each venue, shown as bid / ask, next to the Deribit options-implied probability. Green marks
+          the cheaper ask when both venues list a strike. For spreads, crossed markets and quoting, open the{" "}
+          <Link href="/maker" className="link">
+            maker desk
+          </Link>
+          .
         </p>
       </header>
 
-      <select className="input max-w-xs" value={expiry} onChange={(e) => setExpiry(e.target.value)} aria-label="Expiry">
-        {expiries.map((x) => (
-          <option key={x} value={x}>{expiryLabel(x)}</option>
-        ))}
-      </select>
+      <div className="flex flex-wrap items-center gap-4">
+        <select className="input w-auto" value={expiry} onChange={(e) => setExpiry(e.target.value)} aria-label="Expiry">
+          {expiries.map((x) => (
+            <option key={x} value={x}>{expiryLabel(x)}</option>
+          ))}
+        </select>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={onlyBoth} onChange={(e) => setOnlyBoth(e.target.checked)} className="accent-[var(--accent)]" />
+          Listed on both venues only
+        </label>
+      </div>
 
       {err && (
         <div role="alert" className="note note-bad">
@@ -68,25 +82,28 @@ export default function LadderPage() {
         </div>
       )}
       {!rows && !err && <div className="card animate-pulse h-48" aria-busy="true" />}
-      {rows && rows.length === 0 && <div className="card muted">No strikes listed for this expiry.</div>}
-      {rows && rows.length > 0 && (
+      {shown && shown.length === 0 && (
+        <div className="card muted">{onlyBoth ? "No strike is listed on both venues for this expiry. Untick the filter to see all." : "No strikes listed for this expiry."}</div>
+      )}
+      {shown && shown.length > 0 && (
         <div className="card overflow-x-auto p-0 sm:p-0">
-          <table className="w-full text-sm tabular-nums">
-            <thead className="muted text-left">
+          <table className="num w-full text-sm">
+            <thead className="table-head">
               <tr>
-                <th className="p-3 font-medium">Strike</th>
-                <th className="p-3 font-medium">Gemini</th>
-                <th className="p-3 font-medium">Kalshi</th>
-                <th className="p-3 font-medium text-right">Fair</th>
+                <th>Strike</th>
+                <th style={{ color: "var(--gemini)" }}>Gemini</th>
+                <th style={{ color: "var(--kalshi)" }}>Kalshi</th>
+                <th className="text-right">Fair</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {shown.map((r) => {
                 const g = r.gemini?.ask ?? null;
                 const k = r.kalshi?.ask ?? null;
-                const cheapest = g !== null && k !== null ? (g < k ? "gemini" : k < g ? "kalshi" : null) : g !== null ? "gemini" : k !== null ? "kalshi" : null;
+                // Only highlight when there is a real cross-venue comparison.
+                const cheapest = g !== null && k !== null ? (g < k ? "gemini" : k < g ? "kalshi" : null) : null;
                 return (
-                  <tr key={r.strike} className="border-t border-line">
+                  <tr key={r.strike} className="row-hover border-t border-line">
                     <td className="p-3 font-medium">{usd(r.strike, 0)}</td>
                     <td className="p-3"><Quote q={r.gemini} stale={r.stale.gemini} reason={r.stale_reasons?.gemini} best={cheapest === "gemini"} /></td>
                     <td className="p-3"><Quote q={r.kalshi} stale={r.stale.kalshi} reason={r.stale_reasons?.kalshi} best={cheapest === "kalshi"} /></td>
