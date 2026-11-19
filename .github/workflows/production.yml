@@ -1,0 +1,52 @@
+name: Deploy existing production services
+on: workflow_dispatch
+permissions: {}
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Deploy and verify the selected revision
+        env:
+          BACKEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          FRONTEND_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        shell: python
+        run: |
+          import json, os, time, urllib.request
+          from urllib.parse import urlsplit
+          targets = [
+              ("Render", "BACKEND_HOOK", {"api.render.com"}, "https://bet-builder-api-uxxb.onrender.com/release"),
+              ("Vercel", "FRONTEND_HOOK", {"api.vercel.com"}, "https://bet-builder-frontend.vercel.app/api/release"),
+          ]
+          for name, key, hosts, _ in targets:
+              url = urlsplit(os.getenv(key, ""))
+              if url.scheme != "https" or url.hostname not in hosts:
+                  raise SystemExit(f"Configure {key} for the existing {name} production project.")
+          for name, key, _, endpoint in targets:
+              try:
+                  request = urllib.request.Request(os.environ[key], data=b"", method="POST")
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      print(f"{name} accepted deployment request ({response.status})", flush=True)
+              except Exception:
+                  raise SystemExit(f"{name} rejected its deploy hook. Check it in the hosting dashboard.") from None
+              deadline = time.monotonic() + 480
+              while time.monotonic() < deadline:
+                  try:
+                      with urllib.request.urlopen(endpoint + "?check=" + str(time.time_ns()), timeout=12) as response:
+                          release = json.load(response)
+                      if release.get("revision") == os.environ["GITHUB_SHA"]:
+                          print(f"{name} serves the requested commit", flush=True)
+                          if name == "Render":
+                              for flag in ("grok_key_configured", "solana_signer_configured"):
+                                  if not release.get(flag):
+                                      print(f"::warning::{flag} is false on Render")
+                          break
+                  except (OSError, ValueError):
+                      pass
+                  time.sleep(10)
+              else:
+                  raise SystemExit(f"{name} did not serve the requested commit. Check build logs and the linked branch.")

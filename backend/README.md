@@ -52,3 +52,18 @@ Create and fund a devnet key with `python scripts/new_keypair.py`. It saves the 
 - Set `DATABASE_URL` to a free hosted Postgres (Neon, Supabase, Render Postgres).
 
 Even if the database is lost, any receipt can still be checked with `POST /verify` using the route and its signature, because the proof is onchain.
+
+### Releasing from GitHub
+
+The repository action **Deploy existing production services** runs manually on
+`master`. The hosting owner supplies two repository Actions secrets,
+`RENDER_DEPLOY_HOOK_URL` and `VERCEL_DEPLOY_HOOK_URL`, for the existing
+projects, both targeting master. Enable Vercel system environment variables.
+The action checks the production API revision before requesting the frontend
+deployment and checks the frontend revision afterward.
+
+On Render, set `XAI_API_KEY` for route explanations and `SOLANA_KEYPAIR` for
+a funded **devnet** signer. Keep these runtime secrets on Render. For durable
+receipts set `DATABASE_URL` to a persistent Postgres database. The default
+temporary SQLite file can disappear on redeploy. Configuration indicators at
+`/release` do not prove that a model call or devnet transaction succeeded.
