@@ -99,6 +99,7 @@ export interface Receipt {
 }
 
 export interface Verification {
+  quote?: { request: RouteRequest | null; timestamp: string | null; venues: string[]; filled_size: number | null; cash_outlay: number | null };
   route_id: string;
   status: "verified" | "mismatch" | "pending";
   hash: string;

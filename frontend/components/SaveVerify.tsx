@@ -15,6 +15,8 @@ export default function SaveVerify({ route, request }: { route: Route; request: 
   const [state, setState] = useState<State>({ s: "idle" });
   const [copied, setCopied] = useState(false);
 
+  const [manualLink, setManualLink] = useState("");
+
   async function save() {
     setState({ s: "saving" });
     try {
@@ -33,13 +35,20 @@ export default function SaveVerify({ route, request }: { route: Route; request: 
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      /* clipboard unavailable */
+      setManualLink(url);
     }
+  }
+
+  function shareControl(receipt: Receipt) {
+    const url = new URL(`/verify/${encodeURIComponent(receipt.route_id)}`, window.location.origin).href;
+    return <>
+      <button type="button" onClick={() => copy(url)} className="btn-outline">{copied ? "Link copied" : "Copy verification link"}</button>
+      {manualLink && <input aria-label="Verification link to copy" className="input" readOnly value={manualLink} onFocus={e => e.target.select()} />}
+    </>;
   }
 
   if (state.s === "done") {
     const { receipt } = state;
-    const share = `${window.location.origin}/verify/${encodeURIComponent(receipt.route_id)}`;
     return (
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-3">
@@ -49,9 +58,7 @@ export default function SaveVerify({ route, request }: { route: Route; request: 
           <a href={`/verify/${encodeURIComponent(receipt.route_id)}`} className="link text-sm">
             Re-verify
           </a>
-          <button type="button" onClick={() => copy(share)} className="link text-sm">
-            {copied ? "Link copied" : "Copy share link"}
-          </button>
+          {shareControl(receipt)}
         </div>
         <p className="muted text-xs">Devnet receipt. Only a fingerprint of this route is recorded onchain.</p>
       </div>
@@ -62,7 +69,7 @@ export default function SaveVerify({ route, request }: { route: Route; request: 
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={save} disabled={state.s === "saving"} className="btn-outline">
-          {state.s === "saving" ? "Saving…" : state.s === "pending" ? "Retry receipt" : "Save & verify"}
+          {state.s === "saving" ? "Saving…" : state.s === "pending" ? "Retry receipt" : "Create verification receipt"}
         </button>
         {state.s === "pending" && <span className="pill pill-warn">Receipt pending</span>}
         {state.s === "pending" && state.receipt && (
@@ -71,6 +78,7 @@ export default function SaveVerify({ route, request }: { route: Route; request: 
           </a>
         )}
       </div>
+      {state.s === "pending" && state.receipt && shareControl(state.receipt)}
       {state.s === "pending" && (
         <p className="muted text-xs">
           Your route is still valid. The Solana receipt could not be written yet ({state.reason}).

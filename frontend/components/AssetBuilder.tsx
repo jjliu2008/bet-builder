@@ -18,8 +18,8 @@ function ErrorPanel({ err, onRetry }: { err: ApiError; onRetry: () => void }) {
   let title = "Couldn't build a route";
   let body = err.message;
   if (err.offline) {
-    title = "Backend unreachable";
-    body = `${err.message}. Check that the API is running and NEXT_PUBLIC_API_URL is correct.`;
+    title = "Couldn’t reach the price service";
+    body = "Try again in a moment to get a fresh quote.";
   } else if (err.unavailable) {
     title = "Market data isn't ready";
     body = `${err.message}. The feed may still be starting or stale. Try again in a moment.`;
@@ -162,14 +162,14 @@ function Builder({ asset }: { asset: string }) {
 
         <div className="space-y-6" aria-live="polite">
           {result.s === "idle" && (
-            <div className="card muted text-sm">Choose an outcome and press <strong>Build route</strong> to see the cheapest construction.</div>
+            <div className="card muted text-sm">Choose an outcome and press <strong>Build route</strong> to compare available prices.</div>
           )}
           {result.s === "loading" && (
             <div className="card animate-pulse space-y-3" aria-busy="true">
               <div className="h-5 w-1/2 rounded bg-line" />
               <div className="h-16 rounded bg-line" />
               <div className="h-24 rounded bg-line" />
-              <p className="muted text-sm">Fetching live books and walking depth…</p>
+              <p className="muted text-sm">Checking prices and how many contracts are available…</p>
             </div>
           )}
           {result.s === "error" && <ErrorPanel err={result.err} onRetry={() => last.current && build(last.current)} />}

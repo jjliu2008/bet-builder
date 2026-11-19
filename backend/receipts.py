@@ -146,7 +146,7 @@ def make_router(chain: Optional[ModuleType] = None, store: Optional[MutableMappi
         return rec["receipt"]
 
     @router.get("/verify/{route_id}")
-    async def verify(route_id: str) -> dict:
+    async def verify(route_id: str, include_quote: bool = False) -> dict:
         """Re-check a stored receipt.
 
         Returns:
@@ -165,6 +165,11 @@ def make_router(chain: Optional[ModuleType] = None, store: Optional[MutableMappi
                "explorer_url": r["explorer_url"]}
         if fingerprint(rec["request"], rec["route"]) != r["hash"]:
             return {**out, "status": "mismatch", "detail": "Stored route no longer matches its fingerprint"}
+        if include_quote:
+            route = rec["route"]
+            out["quote"] = {"request": rec.get("request"), "timestamp": route.get("timestamp"),
+                            "venues": sorted({leg["venue"] for leg in route.get("legs", [])}),
+                            "filled_size": route.get("filled_size"), "cash_outlay": route.get("cash_outlay")}
         if not r["signature"]:
             return {**out, "status": "pending", "detail": r.get("error") or "Not anchored onchain yet"}
         return {**out, **(await _check(r["signature"], r["hash"]))}

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
+import { usd, expiryLabel, venueName } from "@/lib/format";
 import { ApiError, getVerify } from "@/lib/api";
 import type { Verification } from "@/lib/types";
 
@@ -17,6 +18,8 @@ export default function VerifyPage({ params }: { params: Promise<{ id: string }>
       .catch((e) => setErr(e instanceof ApiError ? e.message : "Unknown error"));
   }, [routeId]);
 
+  const quote = data?.quote;
+  const req = quote?.request;
   const ok = data?.status === "verified";
   const pending = data?.status === "pending";
   return (
@@ -36,9 +39,16 @@ export default function VerifyPage({ params }: { params: Promise<{ id: string }>
               {ok
                 ? "The stored route matches the fingerprint recorded on Solana devnet."
                 : pending
-                  ? "The route's fingerprint is saved and intact, but it has not been recorded on Solana yet."
+                  ? "The saved quote matches its fingerprint. Onchain confirmation is still pending."
                   : "The stored route does not match its fingerprint. It may have been changed."}
             </p>
+            {quote && <section className="leg space-y-1">
+              <h2 className="font-semibold">Saved quote</h2>
+              {req && <p>{req.asset} {req.type === "between" ? `from ${usd(req.lo!)} to below ${usd(req.hi!)}` : req.type === "above" ? `at or above ${usd(req.lo ?? req.hi!)}` : `below ${usd(req.hi ?? req.lo!)}`} at {expiryLabel(req.expiry)}</p>}
+              {quote.timestamp && <p>Quoted {new Date(quote.timestamp).toUTCString()}</p>}
+              <p>{quote.venues.map(venueName).join(" + ")}</p>
+              {quote.cash_outlay != null && quote.filled_size != null && <p>{usd(quote.cash_outlay * quote.filled_size)} upfront for {quote.filled_size} contracts</p>}
+            </section>}
             {data.detail && <p className="muted text-xs">{data.detail}</p>}
             <p className="muted text-xs break-all">SHA-256 {data.hash}</p>
             {data.explorer_url && (

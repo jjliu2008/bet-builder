@@ -57,7 +57,7 @@ export const postRoute = (body: RouteRequest) =>
 // Receipts: POST /receipt and GET /verify/{route_id} (plan section 5.8).
 export const postReceipt = (route: Route, req: RouteRequest) =>
   request<Receipt>("/receipt", { method: "POST", body: JSON.stringify({ request: req, route }) });
-export const getVerify = (routeId: string) => request<Verification>(`/verify/${encodeURIComponent(routeId)}`);
+export const getVerify = (routeId: string) => request<Verification>(`/verify/${encodeURIComponent(routeId)}?include_quote=true`);
 
 export const getTokenQuote = (symbol: string) =>
   request<{ price_usd: number; traded_at: string; source: string; issuer_url?: string }>(

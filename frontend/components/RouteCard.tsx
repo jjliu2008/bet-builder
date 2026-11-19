@@ -2,6 +2,7 @@ import type { Route, RouteRequest, VerdictCode } from "@/lib/types";
 import { buildLabel, cents, expiryLabel, num, pct, usd, venueName } from "@/lib/format";
 import GrokExplanation from "./GrokExplanation";
 import Warnings from "./Warnings";
+import SettlementChart from "./SettlementChart";
 import SaveVerify from "./SaveVerify";
 import MarketQualityPanel from "./MarketQualityPanel";
 
@@ -41,9 +42,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 export default function RouteCard({ route, request }: { route: Route; request: RouteRequest }) {
   const size = route.filled_size ?? route.size ?? request.size;
   const cash = (route.cash_outlay ?? route.total_cost) * size;
-  const guaranteed = (route.guaranteed_payout ?? 0) * size;
-  const minPayout = guaranteed;
-  const maxPayout = guaranteed + route.max_payout * size;
+  const finding = [...(route.market_quality?.findings ?? [])].sort((a, b) => b.score - a.score)[0];
   const netCost = route.total_cost * size;
   const hasStale = (route.stale_warnings ?? []).length > 0;
   const partial = route.filled_size !== undefined && route.size !== undefined && route.filled_size < route.size;
@@ -65,23 +64,21 @@ export default function RouteCard({ route, request }: { route: Route; request: R
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Stat label="Upfront cash" value={usd(cash)} sub={partial ? `${num(size)} of ${num(route.size ?? size)} requested, incl. fees` : `${num(size)} contracts, incl. fees`} />
-        <Stat label="Net risk" value={usd(netCost)} sub={guaranteed > 0 ? `after ${usd(guaranteed, 0)} guaranteed` : "max loss"} />
-        <Stat
-          label={guaranteed > 0 ? "Payout in range" : "Payout if you win"}
-          value={usd(maxPayout)}
-          sub={guaranteed > 0 ? `${usd(minPayout)} outside range` : "$0 otherwise"}
-        />
-        <Stat
-          label="Savings"
-          value={route.savings === null ? "n/a" : usd(route.savings * size)}
-          sub={route.savings === null ? "no single-venue fill" : "vs. best single venue"}
-        />
-      </div>
-
-      <div>
-        <h3 className="font-semibold mb-2">Contracts to buy</h3>
+      <Stat label="What you pay upfront" value={usd(cash)} sub={`Includes fees for ${num(size)} of ${num(request.size)} requested contracts`} />
+      {finding && <p className="note note-warn"><strong>Quote to check{finding.venue ? ` · ${venueName(finding.venue)}` : ""}</strong><br />{finding.message}</p>}
+      <SettlementChart key={route.grok_snapshot ?? JSON.stringify(request)} route={route} request={request} />
+      <section className="space-y-2">
+        <h3 className="font-semibold">Does using more than one market save money?</h3>
+        <p className="muted text-sm">Compare the cost for the same number of contracts after fees and any base payout.</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Stat label="Selected route" value={usd(netCost)} />
+          <Stat label="Best price on one exchange" value={!partial && route.best_single_venue_cost != null ? usd(route.best_single_venue_cost * size) : "No matching quote"} />
+          <Stat label="You save" value={!partial && route.best_single_venue_cost != null && route.savings != null ? usd(route.savings * size) : "No comparison"} />
+        </div>
+        {!partial && route.savings === 0 && <p className="text-sm">One market already offers the best quoted price.</p>}
+      </section>
+      <details>
+        <summary className="cursor-pointer font-semibold mb-2">Which contracts and fees make up this price?</summary>
         <ul className="space-y-2">
           {route.legs.map((l, i) => (
             <li key={i} className="leg">
@@ -104,27 +101,13 @@ export default function RouteCard({ route, request }: { route: Route; request: R
                 <span>Avg price {cents(l.price)}</span>
                 <span>Fee {cents(l.fee)}/ct</span>
                 <span>Buy {num(l.size ?? size)}</span>
-                <span className="muted">Depth {num(l.size_available)}</span>
+                <span className="muted">Available {num(l.size_available)}</span>
               </div>
             </li>
           ))}
         </ul>
-        {route.legs.length === 2 && route.guaranteed_payout ? (
-          <p className="muted text-xs mt-2">
-            This two-leg spread pays $2 inside the range and $1 outside it, so effective cost is cash minus the guaranteed $1.
-          </p>
-        ) : null}
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-line pt-4">
-        <Stat label="Effective cost" value={cents(route.total_cost)} sub="per $1 of payout" />
-        <Stat label="Options fair value" value={route.fair_value === null ? "n/a" : pct(route.fair_value)} sub={request.asset === "BTC" ? "Deribit-implied" : "No equity options feed"} />
-        <Stat
-          label="Best single venue"
-          value={route.best_single_venue_cost === null ? "n/a" : cents(route.best_single_venue_cost)}
-        />
-        <Stat label="Quoted at" value={new Date(route.timestamp).toLocaleTimeString()} />
-      </div>
+        <p className="muted text-xs mt-2">Quoted at {new Date(route.timestamp).toLocaleString()}. Options market estimate: {route.fair_value == null ? "unavailable" : pct(route.fair_value)}.</p>
+      </details>
 
       <div className="space-y-1" aria-label="Options comparison">
         <p className={`text-sm ${route.verdict_code === "unavailable" ? "muted" : ""}`}>{route.verdict_text}</p>
@@ -139,11 +122,11 @@ export default function RouteCard({ route, request }: { route: Route; request: R
           Illustrative books, not live venue prices. Solana receipts are only written for live BTC routes.
         </p>
       ) : (
-        <SaveVerify route={route} request={request} />
+        <SaveVerify key={route.grok_snapshot ?? route.timestamp} route={route} request={request} />
       )}
 
       <p className="muted text-xs">
-        Analysis only. Fair value is a risk-neutral options estimate, not a guarantee of profit. Nothing is traded for you.
+        This is a quote. Prices can change, and building a route does not place an order.
       </p>
     </section>
   );

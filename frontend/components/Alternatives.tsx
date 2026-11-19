@@ -6,8 +6,8 @@ export default function Alternatives({ route }: { route: Route }) {
   if (alts.length < 2) return null;
   const sorted = [...alts].sort((a, b) => Number(b.complete) - Number(a.complete) || a.total_cost - b.total_cost);
   return (
-    <section className="card">
-      <h3 className="font-semibold mb-3">Alternatives considered</h3>
+    <details className="card">
+      <summary className="cursor-pointer font-semibold mb-3">Compare other ways to build this route</summary>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="muted text-left">
@@ -37,6 +37,6 @@ export default function Alternatives({ route }: { route: Route }) {
           </tbody>
         </table>
       </div>
-    </section>
+    </details>
   );
 }

@@ -89,7 +89,7 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
       </div>
 
       <label className="block">
-        <span className="label">Expiry</span>
+        <span className="label">End date and time</span>
         <select className="input" value={chosen} onChange={(e) => { setExpiry(e.target.value); setLo(null); setHi(null); setError(null); }} disabled={loadingExpiries || !expiries.length}>
           {loadingExpiries && <option>Loading expiries…</option>}
           {!loadingExpiries && !expiries.length && <option>No expiries available</option>}
@@ -139,7 +139,7 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
               <input className="input" list="listed-strikes" inputMode="decimal" value={lo} onChange={(e) => setLo(e.target.value)} />
             </label>
             <label className="block">
-              <span className="label">To, exclusive ($)</span>
+              <span className="label">Up to, but below ($)</span>
               <input className="input" list="listed-strikes" inputMode="decimal" value={hi} onChange={(e) => setHi(e.target.value)} />
             </label>
           </>

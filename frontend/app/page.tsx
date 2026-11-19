@@ -8,13 +8,12 @@ export default function Home() {
         <div className="space-y-4">
           <span className="pill pill-accent">Prediction markets · Gemini × Kalshi · Solana receipts</span>
           <h1 className="text-4xl font-bold leading-[1.05] tracking-tight sm:text-5xl">
-            Say the bet.
+            Where will Bitcoin finish?
             <br />
-            <span className="gradient-text">We build it cheaper.</span>
+            <span className="gradient-text">Compare the cost.</span>
           </h1>
           <p className="muted max-w-2xl text-lg">
-            Pick an outcome, like BTC finishing between two prices. We assemble it from the cheapest mix of Gemini and Kalshi contracts, check
-            it against Deribit options, flag risky quotes, and anchor a receipt on Solana. Stocks and other crypto show live reference prices.
+            Pick a price range and a date. See what it would cost on Gemini and Kalshi, how much you could receive, and where the quotes may be unreliable. You can also look up prices for stocks and other crypto.
           </p>
           <div className="flex flex-wrap gap-3 text-sm">
             <Link href="/maker" className="btn-outline">
@@ -27,9 +26,9 @@ export default function Home() {
         </div>
         <ol className="grid gap-2 text-sm sm:grid-cols-3 lg:w-[420px] lg:grid-cols-1">
           {[
-            ["1", "Route", "Single contract, YES/NO spread or bucket tiling, across venues"],
-            ["2", "Price", "Walks real depth, adds taker fees, compares with options fair value"],
-            ["3", "Prove", "SHA-256 fingerprint written to Solana devnet, verifiable by anyone"],
+            ["1", "Route", "Find contracts that cover your outcome"],
+            ["2", "Price", "Compare available quantities and prices, including fees"],
+            ["3", "Prove", "Share a receipt so anyone can check the saved quote"],
           ].map(([n, t, d]) => (
             <li key={n} className="stat-tile flex gap-3 p-3">
               <span className="num grid h-6 w-6 shrink-0 place-items-center rounded-md text-xs font-bold" style={{ background: "color-mix(in srgb, var(--accent) 18%, transparent)", color: "var(--accent)" }}>
