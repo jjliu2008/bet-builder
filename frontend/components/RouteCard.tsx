@@ -2,6 +2,7 @@ import type { Route, RouteRequest, VerdictCode } from "@/lib/types";
 import { buildLabel, cents, expiryLabel, num, pct, usd, venueName } from "@/lib/format";
 import Warnings from "./Warnings";
 import SaveVerify from "./SaveVerify";
+import MarketQualityPanel from "./MarketQualityPanel";
 
 function describe(r: RouteRequest): string {
   const e = expiryLabel(r.expiry);
@@ -30,7 +31,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   return (
     <div>
       <div className="label">{label}</div>
-      <div className="text-xl font-semibold tabular-nums">{value}</div>
+      <div className="num text-xl font-semibold">{value}</div>
       {sub && <div className="muted text-xs">{sub}</div>}
     </div>
   );
@@ -47,7 +48,7 @@ export default function RouteCard({ route, request }: { route: Route; request: R
   const partial = route.filled_size !== undefined && route.size !== undefined && route.filled_size < route.size;
 
   return (
-    <section className="card space-y-5">
+    <section className="card card-glow space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="label">Recommended route · {buildLabel(route.build)}</div>
@@ -83,7 +84,7 @@ export default function RouteCard({ route, request }: { route: Route; request: R
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className={`pill ${l.side === "YES" ? "pill-good" : "pill-bad"}`}>{l.side}</span>
-                  <span className="font-medium">{venueName(l.venue)}</span>
+                  <span className="font-medium" style={{ color: `var(--${l.venue})` }}>{venueName(l.venue)}</span>
                   <span className="muted text-xs break-all">{l.contract}</span>
                 </div>
                 {l.link && (
@@ -92,7 +93,7 @@ export default function RouteCard({ route, request }: { route: Route; request: R
                   </a>
                 )}
               </div>
-              <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm tabular-nums">
+              <div className="num mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
                 <span>Avg price {cents(l.price)}</span>
                 <span>Fee {cents(l.fee)}/ct</span>
                 <span>Buy {num(l.size ?? size)}</span>
@@ -123,6 +124,7 @@ export default function RouteCard({ route, request }: { route: Route; request: R
         {route.fair_note && <p className="muted text-xs">ⓘ {route.fair_note}</p>}
       </div>
 
+      {route.market_quality && <MarketQualityPanel mq={route.market_quality} />}
       <Warnings route={route} />
       <SaveVerify route={route} request={request} />
 

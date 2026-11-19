@@ -3,7 +3,11 @@ import type { Route } from "@/lib/types";
 export default function Warnings({ route }: { route: Route }) {
   const items: { kind: "bad" | "warn"; text: string }[] = [];
   for (const s of route.stale_warnings ?? []) items.push({ kind: "bad", text: `Stale quote: ${s}` });
-  for (const w of route.warnings ?? []) items.push({ kind: "warn", text: w });
+  for (const w of route.warnings ?? []) {
+    // The structured market-quality panel already shows this summary line.
+    if (route.market_quality && w.startsWith("Market quality (")) continue;
+    items.push({ kind: "warn", text: w });
+  }
   if (route.mixed_settlement_index)
     items.push({
       kind: "warn",

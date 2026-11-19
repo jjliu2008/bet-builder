@@ -52,6 +52,8 @@ export interface Route {
   stale_warnings: string[];
   mixed_settlement_index: boolean;
   timestamp: string;
+  /** Advisory market-quality assessment (PR #7). Absent on older backends. */
+  market_quality?: MarketQuality | null;
   build?: string;
   cash_outlay?: number;
   guaranteed_payout?: number;
@@ -102,4 +104,22 @@ export interface Verification {
   signature: string | null;
   explorer_url: string | null;
   detail?: string | null;
+}
+
+export interface MarketQualityFinding {
+  code: string;
+  message: string;
+  score: number;
+  venue?: string | null;
+  contract?: string | null;
+}
+
+export interface MarketQuality {
+  status: "clear" | "caution" | "review" | "unreliable" | string;
+  risk_score: number;
+  advisory_only?: boolean;
+  evaluated_at?: string;
+  methodology?: string;
+  unavailable_signals?: string[];
+  findings: MarketQualityFinding[];
 }
