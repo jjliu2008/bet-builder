@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import type { BetType, RouteRequest } from "@/lib/types";
+import { useEffect, useState } from "react";
+import type { BetType, LadderRow, RouteRequest } from "@/lib/types";
 import { expiryLabel } from "@/lib/format";
+
+import { getLadder } from "@/lib/api";
 
 interface Props {
   asset: string;
@@ -21,12 +23,39 @@ const TYPES: { id: BetType; label: string }[] = [
 export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubmit }: Props) {
   const [expiry, setExpiry] = useState("");
   const [type, setType] = useState<BetType>("between");
-  const [lo, setLo] = useState(asset === "AAPL" ? "220" : asset === "NVDA" ? "170" : "66000");
-  const [hi, setHi] = useState(asset === "AAPL" ? "230" : asset === "NVDA" ? "180" : "68000");
+  const [manualLo, setLo] = useState<string | null>(null);
+  const [manualHi, setHi] = useState<string | null>(null);
+  const [ladder, setLadder] = useState<{ expiry: string; rows: LadderRow[] } | null>(null);
   const [size, setSize] = useState("10");
   const [error, setError] = useState<string | null>(null);
 
   const chosen = expiry || expiries[0] || "";
+
+  useEffect(() => {
+    if (!chosen) return;
+    let active = true;
+    getLadder(chosen, asset).then(rows => {
+      if (active) setLadder({ expiry: chosen, rows: [...rows].sort((a, b) => a.strike - b.strike) });
+    }).catch(() => {
+      if (active) setLadder({ expiry: chosen, rows: [] });
+    });
+    return () => { active = false; };
+  }, [chosen, asset]);
+
+  const rows = ladder?.expiry === chosen ? ladder.rows : [];
+  function hasDepth(row: LadderRow, side: "bid" | "ask") {
+    return (["gemini", "kalshi"] as const).some(venue => {
+      const q = row[venue];
+      const depth = (side === "ask" ? q?.ask_size : q?.bid_size) ?? 0;
+      return q && !row.stale[venue] && q[side] !== null && depth > 0 && depth >= Number(size);
+    });
+  }
+  const bids = rows.filter(row => hasDepth(row, "bid"));
+  const asks = rows.filter(row => hasDepth(row, "ask"));
+  const lower = asks.find(row => type !== "between" || row.strike < (bids.at(-1)?.strike ?? 0));
+  const upper = bids.find(row => type !== "between" || row.strike > Number(manualLo ?? lower?.strike));
+  const lo = manualLo ?? String(lower?.strike ?? "");
+  const hi = manualHi ?? String(upper?.strike ?? "");
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,7 +90,7 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
 
       <label className="block">
         <span className="label">Expiry</span>
-        <select className="input" value={chosen} onChange={(e) => setExpiry(e.target.value)} disabled={loadingExpiries || !expiries.length}>
+        <select className="input" value={chosen} onChange={(e) => { setExpiry(e.target.value); setLo(null); setHi(null); setError(null); }} disabled={loadingExpiries || !expiries.length}>
           {loadingExpiries && <option>Loading expiries…</option>}
           {!loadingExpiries && !expiries.length && <option>No expiries available</option>}
           {expiries.map((x) => (
@@ -94,37 +123,38 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
         {type === "above" && (
           <label className="block col-span-2">
             <span className="label">At or above ($)</span>
-            <input className="input" inputMode="decimal" value={lo} onChange={(e) => setLo(e.target.value)} />
+            <input className="input" list="listed-strikes" inputMode="decimal" value={lo} onChange={(e) => setLo(e.target.value)} />
           </label>
         )}
         {type === "below" && (
           <label className="block col-span-2">
             <span className="label">Below ($)</span>
-            <input className="input" inputMode="decimal" value={hi} onChange={(e) => setHi(e.target.value)} />
+            <input className="input" list="listed-strikes" inputMode="decimal" value={hi} onChange={(e) => setHi(e.target.value)} />
           </label>
         )}
         {type === "between" && (
           <>
             <label className="block">
               <span className="label">From ($)</span>
-              <input className="input" inputMode="decimal" value={lo} onChange={(e) => setLo(e.target.value)} />
+              <input className="input" list="listed-strikes" inputMode="decimal" value={lo} onChange={(e) => setLo(e.target.value)} />
             </label>
             <label className="block">
               <span className="label">To, exclusive ($)</span>
-              <input className="input" inputMode="decimal" value={hi} onChange={(e) => setHi(e.target.value)} />
+              <input className="input" list="listed-strikes" inputMode="decimal" value={hi} onChange={(e) => setHi(e.target.value)} />
             </label>
           </>
         )}
       </div>
 
       <label className="block">
-        <span className="label">Size (contracts = $ paid out if you win)</span>
+        <span className="label">Size (contracts)</span>
         <input className="input" inputMode="decimal" value={size} onChange={(e) => setSize(e.target.value)} />
       </label>
 
+      <datalist id="listed-strikes">{rows.map(row => <option key={row.strike} value={row.strike} />)}</datalist>
       {error && <p role="alert" className="text-sm text-bad">{error}</p>}
 
-      <button type="submit" disabled={busy || loadingExpiries} className="btn w-full">
+      <button type="submit" disabled={busy || loadingExpiries || !chosen} className="btn w-full">
         {busy ? "Building route…" : "Build route"}
       </button>
     </form>
