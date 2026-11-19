@@ -230,7 +230,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
         if body.asset in equity_demo.STRIKES:
             result = price_route(body, equity_books(body.asset, body.expiry), now=equity_demo.AS_OF, config=route_config)
             result.warnings.append("Stock scenario uses synthetic venue quotes and illustrative fees.")
-            result.grok_snapshot = explainer.remember(body, result)
+            result.grok_snapshot = explainer.remember(body, result, "demo")
             return result
         key, books = _books(state, body.expiry)
         fair, now = _fair(state, key, books), state.now()
@@ -241,7 +241,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
             stale_fn=make_stale_fn(books, key, fair, history, state.spot_history, now),
             now=now, config=route_config, quote_history=history)
 
-        result.grok_snapshot = explainer.remember(body, result)
+        result.grok_snapshot = explainer.remember(body, result, "replay" if replayer else "live")
         if hasattr(store, "record_route"):
             selected = {(leg.venue, leg.contract) for leg in result.legs}
             quotes = [book.model_dump(mode="json") for book in books

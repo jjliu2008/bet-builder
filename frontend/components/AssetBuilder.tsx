@@ -48,14 +48,20 @@ export default function AssetBuilder() {
 
       <label className="my-4 block max-w-sm"><span className="label">Underlying asset</span>
         <select className="input" value={asset} onChange={e => setAsset(e.target.value)}>
-          <option value="BTC">Bitcoin</option>
-          <option value="AAPLx">Apple xStock (AAPLx)</option>
-          <option value="NVDAx">NVIDIA xStock (NVDAx)</option>
-          <option value="AAPL">Apple (AAPL) · simulation</option>
-          <option value="NVDA">NVIDIA (NVDA) · simulation</option>
+          <optgroup label="Prediction routes"><option value="BTC">Bitcoin (BTC)</option></optgroup>
+          <optgroup label="Stocks · regular-session prices">
+            <option value="AAPL">Apple (AAPL)</option><option value="NVDA">NVIDIA (NVDA)</option>
+            <option value="MSFT">Microsoft (MSFT)</option><option value="TSLA">Tesla (TSLA)</option>
+          </optgroup>
+          <optgroup label="Crypto · USD spot">
+            <option value="ETH">Ethereum (ETH)</option><option value="SOL">Solana (SOL)</option>
+          </optgroup>
+          <optgroup label="Tokenized equities">
+            <option value="AAPLx">Apple xStock (AAPLx)</option><option value="NVDAx">NVIDIA xStock (NVDAx)</option>
+          </optgroup>
         </select>
       </label>
-      {asset.endsWith("x") ? <TokenQuote key={asset} symbol={asset} /> : <Builder key={asset} asset={asset} />}
+      {asset !== "BTC" ? <TokenQuote key={asset} symbol={asset} /> : <Builder key={asset} asset={asset} />}
     </>
   );
 }
@@ -96,11 +102,6 @@ function Builder({ asset }: { asset: string }) {
 
   return (
     <>
-      <header className="mb-6">
-        {asset !== "BTC" &&
-          <p className="note note-warn">Stock-price prediction demo using simulated books as of November 19, 2026 at 15:00 UTC. All prices and sizes are illustrative.</p>}
-      </header>
-
       {expErr && (
         <div role="alert" className="note note-bad mb-6 flex flex-wrap items-center justify-between gap-3">
           <span>

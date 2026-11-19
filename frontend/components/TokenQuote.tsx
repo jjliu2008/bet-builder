@@ -26,13 +26,13 @@ export default function TokenQuote({ symbol }: { symbol: string }) {
 
   return (
     <section className="card space-y-3" aria-live="polite">
-      <h2 className="text-lg font-semibold">{symbol} tokenized equity</h2>
+      <h2 className="text-lg font-semibold">{symbol} · USD</h2>
       {quote ? <>
         <p className="text-2xl tabular-nums">{usd(quote.price_usd)}</p>
-        <p>Last trade on {quote.source} · {new Date(quote.traded_at).toUTCString()}</p>
-        <a className="link" href={quote.issuer_url}>Issuer product details</a>
+        <p>{quote.source} · {new Date(quote.traded_at).toUTCString()}</p>
+        {quote.issuer_url && <a className="link" href={quote.issuer_url}>Issuer product details</a>}
       </> : <p>{error ? "The last trade is unavailable." : "Fetching the last trade…"}</p>}
-      <p className="muted text-sm">Spot market reference. Prediction contract pricing requires a separately listed outcome market.</p>
+      <p className="muted text-sm">Reference price as of the displayed time. Choose Bitcoin to price a prediction route.</p>
       <button type="button" className="btn-outline" disabled={!quote && !error} onClick={refresh}>Refresh price</button>
     </section>
   );

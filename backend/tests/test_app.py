@@ -425,7 +425,7 @@ def test_standalone_fair_value_matches_route(env):
 
 def test_grok_uses_priced_snapshot_and_handles_missing_credentials(env, monkeypatch):
     monkeypatch.delenv("XAI_API_KEY", raising=False)
-    result = route(env, type="above", lo=68000, size=10).json()
+    result = route(env, type="between", lo=66000, hi=68000, size=10).json()
     body = {"snapshot": result["grok_snapshot"], "topic": "depth"}
     assert env.client.post("/grok/explain", json=body).status_code == 503
     monkeypatch.setenv("XAI_API_KEY", "test-only")
@@ -439,5 +439,7 @@ def test_grok_uses_priced_snapshot_and_handles_missing_credentials(env, monkeypa
 
     monkeypatch.setattr("backend.grok.httpx.AsyncClient.post", reply)
     answer = env.client.post("/grok/explain", json=body)
-    assert answer.json()["answer"] == "Depth covers the request."
+    assert answer.json()["answer"].startswith("Depth covers the request.")
+    assert "$1 outside the requested range and $2 inside" in answer.json()["answer"]
+    assert "live venue quotes" in answer.json()["answer"]
     assert env.client.post("/grok/explain", json={**body, "snapshot": "0"*64}).status_code == 404

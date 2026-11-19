@@ -60,8 +60,8 @@ export const postReceipt = (route: Route, req: RouteRequest) =>
 export const getVerify = (routeId: string) => request<Verification>(`/verify/${encodeURIComponent(routeId)}`);
 
 export const getTokenQuote = (symbol: string) =>
-  request<{ price_usd: number; traded_at: string; source: string; issuer_url: string }>(
-    `/rwas/${encodeURIComponent(symbol)}`
+  request<{ price_usd: number; traded_at: string; source: string; issuer_url?: string }>(
+    `/${symbol.endsWith("x") ? "rwas" : "spot"}/${encodeURIComponent(symbol)}`
   );
 
 export const explainRoute = (snapshot: string, topic: string) =>
