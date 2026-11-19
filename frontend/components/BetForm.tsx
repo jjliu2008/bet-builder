@@ -5,6 +5,7 @@ import type { BetType, RouteRequest } from "@/lib/types";
 import { expiryLabel } from "@/lib/format";
 
 interface Props {
+  asset: string;
   expiries: string[];
   loadingExpiries: boolean;
   busy: boolean;
@@ -17,11 +18,11 @@ const TYPES: { id: BetType; label: string }[] = [
   { id: "between", label: "Between" },
 ];
 
-export default function BetForm({ expiries, loadingExpiries, busy, onSubmit }: Props) {
+export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubmit }: Props) {
   const [expiry, setExpiry] = useState("");
   const [type, setType] = useState<BetType>("between");
-  const [lo, setLo] = useState("66000");
-  const [hi, setHi] = useState("68000");
+  const [lo, setLo] = useState(asset === "AAPL" ? "220" : asset === "NVDA" ? "170" : "66000");
+  const [hi, setHi] = useState(asset === "AAPL" ? "230" : asset === "NVDA" ? "180" : "68000");
   const [size, setSize] = useState("10");
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +43,7 @@ export default function BetForm({ expiries, loadingExpiries, busy, onSubmit }: P
     }
     setError(null);
     onSubmit({
-      asset: "BTC",
+      asset,
       expiry: chosen,
       type,
       lo: type === "below" ? null : loN,
@@ -59,13 +60,6 @@ export default function BetForm({ expiries, loadingExpiries, busy, onSubmit }: P
       </div>
 
       <label className="block">
-        <span className="label">Asset</span>
-        <select className="input" disabled>
-          <option>BTC (Bitcoin)</option>
-        </select>
-      </label>
-
-      <label className="block">
         <span className="label">Expiry</span>
         <select className="input" value={chosen} onChange={(e) => setExpiry(e.target.value)} disabled={loadingExpiries || !expiries.length}>
           {loadingExpiries && <option>Loading expiries…</option>}
@@ -79,7 +73,7 @@ export default function BetForm({ expiries, loadingExpiries, busy, onSubmit }: P
       </label>
 
       <div>
-        <span className="label">BTC finishes</span>
+        <span className="label">{asset} finishes</span>
         <div className="grid grid-cols-3 gap-2" role="radiogroup">
           {TYPES.map((t) => (
             <button

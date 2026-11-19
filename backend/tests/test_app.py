@@ -414,3 +414,30 @@ def test_real_chain_with_mocked_rpc(monkeypatch):
     rec = client.post("/receipt", json={"request": req, "route": route_body}).json()
     assert rec["status"] == "confirmed" and ledger.txs[rec["signature"]] == f"better:v1:{rec['hash']}"
     assert client.get(f"/verify/{rec['route_id']}").json()["status"] == "verified"
+
+
+def test_standalone_fair_value_matches_route(env):
+    params = dict(asset="BTC", expiry=EXP_KEY, type="between", lo=66000, hi=68000)
+    reference = env.client.get("/fair-value", params=params)
+    assert reference.status_code == 200
+    assert reference.json()["fair_value"] == pytest.approx(env.client.post("/route", json=params).json()["fair_value"])
+
+
+def test_grok_uses_priced_snapshot_and_handles_missing_credentials(env, monkeypatch):
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    result = route(env, type="above", lo=68000, size=10).json()
+    body = {"snapshot": result["grok_snapshot"], "topic": "depth"}
+    assert env.client.post("/grok/explain", json=body).status_code == 503
+    monkeypatch.setenv("XAI_API_KEY", "test-only")
+
+    async def reply(client, url, *, headers, json):
+        assert url == "https://api.x.ai/v1/responses"
+        assert result["legs"][0]["contract"] in json["input"]
+        from httpx import Request, Response
+        return Response(200, request=Request("POST", url), json={"status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "Depth covers the request."}]}]})
+
+    monkeypatch.setattr("backend.grok.httpx.AsyncClient.post", reply)
+    answer = env.client.post("/grok/explain", json=body)
+    assert answer.json()["answer"] == "Depth covers the request."
+    assert env.client.post("/grok/explain", json={**body, "snapshot": "0"*64}).status_code == 404

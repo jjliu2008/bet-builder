@@ -128,3 +128,13 @@ def test_retry_skips_without_signer(tmp_path):
     store = ReceiptStore(db_path=str(tmp_path / "r.db"))
     store["x"] = {"request": None, "route": {}, "receipt": {"status": "pending", "signature": None, "hash": "0" * 64}}
     assert asyncio.run(retry_pending(store, chain)) == 0
+
+
+def test_savings_summary_counts_distinct_comparable_live_routes(tmp_path):
+    from backend.receipt_store import ReceiptStore
+    store = ReceiptStore(str(tmp_path / "stats.db"), database_url="")
+    for key, mode, amount in [("a", "live", 2), ("a", "live", 2), ("b", "replay", 10),
+                              ("c", "live", None), ("d", "live", 4)]:
+        store.record_route(key, "2026-11-19", mode, amount, {})
+    assert store.savings_summary() == {"observations": 2, "average_estimated_savings_usd": 3,
+                                       "largest_estimated_savings_usd": 4}
