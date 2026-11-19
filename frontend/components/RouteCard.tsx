@@ -47,15 +47,18 @@ export default function RouteCard({ route, request }: { route: Route; request: R
   const netCost = route.total_cost * size;
   const hasStale = (route.stale_warnings ?? []).length > 0;
   const partial = route.filled_size !== undefined && route.size !== undefined && route.filled_size < route.size;
+  // Equity demo books use DEMO- contract ids; anything that is not live BTC data is a simulation.
+  const simulated = request.asset !== "BTC" || route.legs.some((l) => l.contract.startsWith("DEMO-"));
 
   return (
-    <section className="card card-glow space-y-5">
+    <section className={`card space-y-5 ${simulated ? "" : "card-glow"}`} style={simulated ? { borderStyle: "dashed", borderColor: "var(--warn)" } : undefined}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="label">Recommended route · {buildLabel(route.build)}</div>
           <h2 className="text-lg font-semibold">{describe(request)}</h2>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {simulated && <span className="pill pill-warn">◇ Simulated data</span>}
           {partial && <span className="pill pill-bad">Partial fill</span>}
           {hasStale && <span className="pill pill-bad">Stale quote</span>}
           <Verdict route={route} />
@@ -85,10 +88,13 @@ export default function RouteCard({ route, request }: { route: Route; request: R
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className={`pill ${l.side === "YES" ? "pill-good" : "pill-bad"}`}>{l.side}</span>
-                  <span className="font-medium" style={{ color: `var(--${l.venue})` }}>{venueName(l.venue)}</span>
+                  <span className="font-medium" style={{ color: `var(--${l.venue})` }}>
+                    {venueName(l.venue)}
+                    {simulated && <span className="muted font-normal"> (simulated book)</span>}
+                  </span>
                   <span className="muted text-xs break-all">{l.contract}</span>
                 </div>
-                {l.link && (
+                {l.link && !simulated && (
                   <a href={l.link} target="_blank" rel="noreferrer" className="link text-sm">
                     Open market ↗
                   </a>
@@ -128,7 +134,13 @@ export default function RouteCard({ route, request }: { route: Route; request: R
       {route.market_quality && <MarketQualityPanel mq={route.market_quality} />}
       <Warnings route={route} />
       {route.grok_snapshot && <GrokExplanation key={route.grok_snapshot} snapshot={route.grok_snapshot} />}
-      {request.asset === "BTC" && <SaveVerify route={route} request={request} />}
+      {simulated ? (
+        <p className="note note-warn">
+          Illustrative books, not live venue prices. Solana receipts are only written for live BTC routes.
+        </p>
+      ) : (
+        <SaveVerify route={route} request={request} />
+      )}
 
       <p className="muted text-xs">
         Analysis only. Fair value is a risk-neutral options estimate, not a guarantee of profit. Nothing is traded for you.

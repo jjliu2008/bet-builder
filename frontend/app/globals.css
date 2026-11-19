@@ -1,68 +1,118 @@
 @import "tailwindcss";
 
+/* Theme tokens. Dark is the default look; light mode follows the OS setting. */
 :root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --ink: #12151c;
-  --ink-2: #5b6473;
-  --line: #e3e6ec;
-  --accent: #4f46e5;
-  --good: #0f8a5f;
-  --bad: #c2362f;
-  --warn: #a86a00;
+  --bg: #07090f;
+  --bg-2: #0b0f19;
+  --panel: #0f1420;
+  --panel-2: #141a29;
+  --ink: #e8ecf5;
+  --ink-2: #8d97ad;
+  --line: #1e2638;
+  --line-2: #2a3449;
+  --accent: #5eead4;
+  --accent-2: #a78bfa;
+  --accent-ink: #04201c;
+  --good: #34d399;
+  --bad: #fb7185;
+  --warn: #fbbf24;
+  --gemini: #0ea5c4;
+  --kalshi: #8b5cf6;
+  --fair: #c97a08;
+  --glow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent), 0 10px 40px -12px color-mix(in srgb, var(--accent) 35%, transparent);
 }
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --bg: #0d0f14;
-    --panel: #151922;
-    --ink: #eceef3;
-    --ink-2: #98a1b3;
-    --line: #262c3a;
-    --accent: #8b87ff;
-    --good: #3ddc97;
-    --bad: #ff6b63;
-    --warn: #f2b34a;
+    --bg: #f5f7fb;
+    --bg-2: #eef1f7;
+    --panel: #ffffff;
+    --panel-2: #f7f9fc;
+    --ink: #0d1220;
+    --ink-2: #5a6478;
+    --line: #e2e7f0;
+    --line-2: #cfd6e4;
+    --accent: #0d9488;
+    --accent-2: #7c3aed;
+    --accent-ink: #ffffff;
+    --good: #059669;
+    --bad: #e11d48;
+    --warn: #b45309;
+    --gemini: #0891b2;
+    --kalshi: #7c3aed;
+    --fair: #b45309;
+    --glow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent), 0 10px 30px -14px color-mix(in srgb, var(--accent) 30%, transparent);
   }
 }
 
 @theme inline {
   --color-bg: var(--bg);
   --color-panel: var(--panel);
+  --color-panel2: var(--panel-2);
   --color-ink: var(--ink);
   --color-ink2: var(--ink-2);
   --color-line: var(--line);
   --color-accent: var(--accent);
+  --color-accent2: var(--accent-2);
   --color-good: var(--good);
   --color-bad: var(--bad);
   --color-warn: var(--warn);
+  --color-gemini: var(--gemini);
+  --color-kalshi: var(--kalshi);
+  --color-fair: var(--fair);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+html { color-scheme: dark light; }
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(900px 500px at 85% -10%, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 60%),
+    radial-gradient(700px 400px at -10% 10%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
+::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 
 @layer components {
-  .card { @apply rounded-2xl border border-line bg-panel p-5 sm:p-6; }
+  .card { @apply rounded-2xl border border-line p-5 sm:p-6; background: color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter: blur(8px); }
+  .card-glow { box-shadow: var(--glow); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
   .muted { color: var(--ink-2); }
-  .label { @apply block text-xs font-medium uppercase tracking-wide mb-1; color: var(--ink-2); }
-  .input { @apply w-full rounded-lg border border-line bg-transparent px-3 py-2 text-base outline-none focus:ring-2 focus:ring-accent disabled:opacity-60; }
-  .input option { color: #12151c; }
-  .btn { @apply rounded-lg bg-accent px-4 py-2.5 font-semibold text-white disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent; }
-  .btn-outline { @apply rounded-lg border border-accent px-4 py-2 font-semibold text-accent disabled:opacity-60; }
-  .seg { @apply rounded-lg border border-line px-3 py-2 text-sm font-medium; }
-  .seg-on { @apply border-accent text-accent; background: color-mix(in srgb, var(--accent) 12%, transparent); }
-  .pill { @apply inline-flex items-center rounded-full border border-line px-2.5 py-0.5 text-xs font-semibold; }
-  .pill-good { color: var(--good); border-color: var(--good); }
-  .pill-bad { color: var(--bad); border-color: var(--bad); }
-  .pill-warn { color: var(--warn); border-color: var(--warn); }
-  .pill-accent { color: var(--accent); border-color: var(--accent); }
+  .label { @apply block text-[11px] font-medium uppercase tracking-[0.08em] mb-1; color: var(--ink-2); }
+  .num { font-family: var(--font-geist-mono), ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .input { @apply w-full rounded-lg border border-line px-3 py-2 text-base outline-none focus:ring-2 focus:ring-accent disabled:opacity-60; background: var(--bg-2); }
+  .input option { color: #0d1220; }
+  .btn { @apply rounded-lg px-4 py-2.5 font-semibold disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent transition; color: var(--accent-ink); background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--accent-2))); }
+  .btn:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn-outline { @apply rounded-lg border px-4 py-2 font-semibold disabled:opacity-60 transition; border-color: color-mix(in srgb, var(--accent) 60%, transparent); color: var(--accent); }
+  .btn-outline:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .seg { @apply rounded-lg border border-line px-3 py-2 text-sm font-medium transition; background: var(--bg-2); }
+  .seg:hover { border-color: var(--line-2); }
+  .seg-on { @apply text-accent; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .pill { @apply inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap; }
+  .pill-good { color: var(--good); border-color: color-mix(in srgb, var(--good) 55%, transparent); background: color-mix(in srgb, var(--good) 10%, transparent); }
+  .pill-bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); background: color-mix(in srgb, var(--bad) 10%, transparent); }
+  .pill-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+  .pill-accent { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .pill-gemini { color: var(--gemini); border-color: color-mix(in srgb, var(--gemini) 55%, transparent); }
+  .pill-kalshi { color: var(--kalshi); border-color: color-mix(in srgb, var(--kalshi) 55%, transparent); }
   .link { @apply text-accent underline-offset-2 hover:underline; }
-  .leg { @apply rounded-lg border border-line p-3; }
+  .leg { @apply rounded-xl border border-line p-3; background: var(--bg-2); }
   .note { @apply rounded-lg border px-3 py-2 text-sm; }
-  .note-bad { color: var(--bad); border-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, transparent); }
-  .note-warn { color: var(--warn); border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+  .note-bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+  .note-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+  .gradient-text { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .nav-link { @apply rounded-lg px-3 py-1.5 text-sm font-medium transition; color: var(--ink-2); }
+  .nav-link:hover { color: var(--ink); background: var(--panel-2); }
+  .nav-link-on { color: var(--ink); background: var(--panel-2); }
+  .stat-tile { @apply rounded-xl border border-line p-4; background: var(--bg-2); }
+  .dot { @apply inline-block h-2 w-2 rounded-full; }
+  .table-head th { @apply py-2 px-3 text-left text-[11px] font-medium uppercase tracking-[0.08em]; color: var(--ink-2); }
+  .row-hover:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+  .row-on { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 }
+
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.live-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }

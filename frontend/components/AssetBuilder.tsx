@@ -45,26 +45,70 @@ export default function AssetBuilder() {
   const [asset, setAsset] = useState("BTC");
   return (
     <>
-
-      <label className="my-4 block max-w-sm"><span className="label">Underlying asset</span>
-        <select className="input" value={asset} onChange={e => setAsset(e.target.value)}>
-          <optgroup label="Prediction routes"><option value="BTC">Bitcoin (BTC)</option></optgroup>
-          <optgroup label="Stocks · regular-session prices">
-            <option value="AAPL">Apple (AAPL)</option><option value="NVDA">NVIDIA (NVDA)</option>
-            <option value="MSFT">Microsoft (MSFT)</option><option value="TSLA">Tesla (TSLA)</option>
-          </optgroup>
-          <optgroup label="Crypto · USD spot">
-            <option value="ETH">Ethereum (ETH)</option><option value="SOL">Solana (SOL)</option>
-          </optgroup>
-          <optgroup label="Tokenized equities">
-            <option value="AAPLx">Apple xStock (AAPLx)</option><option value="NVDAx">NVIDIA xStock (NVDAx)</option>
-          </optgroup>
-        </select>
-      </label>
+      <section className="card mb-6 space-y-3 py-4 sm:py-4" aria-label="Underlying asset">
+        <span className="label">Underlying asset</span>
+        <div className="flex flex-wrap gap-x-6 gap-y-3">
+          {ASSET_GROUPS.map((g) => (
+            <div key={g.title} className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`pill ${g.pill}`}>{g.title}</span>
+                <span className="muted">{g.hint}</span>
+              </div>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={g.title}>
+                {g.items.map((it) => (
+                  <button
+                    key={it.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={asset === it.value}
+                    onClick={() => setAsset(it.value)}
+                    className={`seg ${asset === it.value ? "seg-on" : ""}`}
+                  >
+                    {it.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
       {asset !== "BTC" ? <TokenQuote key={asset} symbol={asset} /> : <Builder key={asset} asset={asset} />}
     </>
   );
 }
+
+const ASSET_GROUPS = [
+  { title: "Prediction routes", hint: "Gemini × Kalshi books, Deribit fair value", pill: "pill-good", items: [{ value: "BTC", label: "Bitcoin (BTC)" }] },
+  {
+    title: "Stocks",
+    hint: "regular-session price",
+    pill: "",
+    items: [
+      { value: "AAPL", label: "Apple" },
+      { value: "NVDA", label: "NVIDIA" },
+      { value: "MSFT", label: "Microsoft" },
+      { value: "TSLA", label: "Tesla" },
+    ],
+  },
+  {
+    title: "Crypto",
+    hint: "USD spot",
+    pill: "",
+    items: [
+      { value: "ETH", label: "Ethereum" },
+      { value: "SOL", label: "Solana" },
+    ],
+  },
+  {
+    title: "Tokenized stocks",
+    hint: "xStocks",
+    pill: "",
+    items: [
+      { value: "AAPLx", label: "AAPLx" },
+      { value: "NVDAx", label: "NVDAx" },
+    ],
+  },
+];
 
 function Builder({ asset }: { asset: string }) {
   const [expiries, setExpiries] = useState<string[]>([]);

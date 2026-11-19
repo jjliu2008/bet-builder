@@ -25,13 +25,21 @@ export default function TokenQuote({ symbol }: { symbol: string }) {
   }
 
   return (
-    <section className="card space-y-3" aria-live="polite">
-      <h2 className="text-lg font-semibold">{symbol} · USD</h2>
+    <section className="card max-w-xl space-y-3" aria-live="polite">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">{symbol} · USD</h2>
+        <span className="pill">Price only</span>
+      </div>
       {quote ? <>
-        <p className="text-2xl tabular-nums">{usd(quote.price_usd)}</p>
-        <p>{quote.source} · {new Date(quote.traded_at).toUTCString()}</p>
-        {quote.issuer_url && <a className="link" href={quote.issuer_url}>Issuer product details</a>}
-      </> : <p>{error ? "The last trade is unavailable." : "Fetching the last trade…"}</p>}
+        <p className="num text-3xl font-semibold">{usd(quote.price_usd)}</p>
+        <p className="muted text-sm">{quote.source} · {new Date(quote.traded_at).toUTCString()}</p>
+        {quote.issuer_url && <a className="link text-sm" href={quote.issuer_url} target="_blank" rel="noreferrer">Issuer product details ↗</a>}
+      </> : error ? <p className="note note-bad">The last trade is unavailable.</p> : (
+        <div className="space-y-2" aria-busy="true">
+          <div className="h-9 w-40 animate-pulse rounded bg-line" />
+          <div className="h-4 w-64 animate-pulse rounded bg-line" />
+        </div>
+      )}
       <p className="muted text-sm">Reference price as of the displayed time. Choose Bitcoin to price a prediction route.</p>
       <button type="button" className="btn-outline" disabled={!quote && !error} onClick={refresh}>Refresh price</button>
     </section>
