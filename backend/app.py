@@ -199,7 +199,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
         asset = _asset(asset)
         if asset != "BTC":
             books = await markets.get(asset, expiry)
-            surface = await markets.surface(asset)
+            surface = None if fair_hidden(expiry) else await markets.surface(asset)
             strikes = sorted({b.strike for b in books if b.strike is not None})
             try:
                 fair = fair_above(asset, expiry, strikes, surface=surface) if surface and strikes else None
@@ -232,7 +232,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
         mode = state.mode if body.asset == "BTC" else "live"
         if body.asset != "BTC":
             books = await markets.get(body.asset, body.expiry)
-            surface = await markets.surface(body.asset)
+            surface = None if fair_hidden(body.expiry) else await markets.surface(body.asset)
             observed_history = markets.histories.get((body.asset, expiry_key(body.expiry)))
             history = observed_history.as_mapping() if observed_history else None
             result = price_route(body, books, fair_fn=make_fair_fn(surface) if surface else None,

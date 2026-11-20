@@ -43,7 +43,7 @@ async def gemini_snapshot(asset, contracts=None):
 def eth_surface(asset):
     rows = fetch("https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
                  params={"currency": asset, "kind": "option"})["result"]
-    return build_surface(rows, asset)
+    return build_surface(rows, asset, fit_smiles=False)
 
 
 def catalog(asset):
@@ -87,7 +87,13 @@ def catalog(asset):
 
 def books(asset, expiry, event):
     if asset in CRYPTO:
-        result = asyncio.run(gemini_snapshot(asset, event["gemini"])) if event.get("gemini") else []
+        result = []
+        if event.get("gemini"):
+            try:
+                result = asyncio.run(asyncio.wait_for(gemini_snapshot(asset, event["gemini"]), timeout=8))
+            except TimeoutError:
+                if not event.get("kalshi"):
+                    raise requests.Timeout("Gemini books timed out")
         markets = []
         if event.get("kalshi"):
             try:

@@ -275,7 +275,8 @@ def _parse_instrument(name: str):
         return None
 
 
-def build_surface(rows: Iterable[dict], asset: str = "BTC", now: Optional[datetime] = None) -> Surface:
+def build_surface(rows: Iterable[dict], asset: str = "BTC", now: Optional[datetime] = None,
+                  *, fit_smiles: bool = True) -> Surface:
     """Fit an SVI smile per expiry from Deribit book-summary rows.
 
     Args:
@@ -310,7 +311,7 @@ def build_surface(rows: Iterable[dict], asset: str = "BTC", now: Optional[dateti
         w = (np.array([p[1] for p in pts]) / 100.0) ** 2 * tau
         atm_sd = float(np.sqrt(w[np.argmin(np.abs(k))]))      # ~1 standard deviation in k
         weights = 1.0 / (1.0 + (k / (2.0 * atm_sd)) ** 2)      # emphasize the near-money smile
-        params = fit_svi(k, w, weights) if len(pts) >= MIN_SVI_POINTS else None
+        params = fit_svi(k, w, weights) if fit_smiles and len(pts) >= MIN_SVI_POINTS else None
         slices.append(Slice(expiry=exp, tau=tau, forward=F, k=k, w=w, params=params))
     return Surface(asset=asset.upper(), built_at=now, slices=slices)
 
