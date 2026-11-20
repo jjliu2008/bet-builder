@@ -1,26 +1,31 @@
 name: Deploy existing production services
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Service to deploy
+        type: choice
+        default: both
+        options: [both, frontend, backend]
 permissions: {}
 concurrency:
   group: production-release
   cancel-in-progress: false
 jobs:
-  deploy:
-    if: github.ref == 'refs/heads/master'
+  render:
+    if: github.ref == 'refs/heads/master' && inputs.target != 'frontend'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Deploy and verify the selected revision
         env:
           BACKEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-          FRONTEND_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
         shell: python
         run: |
           import json, os, time, urllib.request
           from urllib.parse import urlsplit
           targets = [
               ("Render", "BACKEND_HOOK", {"api.render.com"}, "https://bet-builder-api-uxxb.onrender.com/release"),
-              ("Vercel", "FRONTEND_HOOK", {"api.vercel.com"}, "https://bet-builder-frontend.vercel.app/api/release"),
           ]
           for name, key, hosts, _ in targets:
               url = urlsplit(os.getenv(key, ""))
@@ -50,3 +55,45 @@ jobs:
                   time.sleep(10)
               else:
                   raise SystemExit(f"{name} did not serve the requested commit. Check build logs and the linked branch.")
+
+  vercel:
+    if: github.ref == 'refs/heads/master' && inputs.target != 'backend'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Deploy the selected Git commit to the existing Vercel project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+        shell: python
+        run: |
+          import json, os, urllib.error, urllib.parse, urllib.request
+
+          token = os.environ["VERCEL_TOKEN"]
+          team = os.environ["VERCEL_TEAM_ID"]
+          if not token or not team:
+              raise SystemExit("Set the VERCEL_TOKEN repository secret and VERCEL_TEAM_ID repository variable.")
+          url = "https://api.vercel.com/v13/deployments?" + urllib.parse.urlencode({"teamId": team})
+          payload = {"name": "bet-builder-frontend", "target": "production",
+                     "gitSource": {"type": "github", "repoId": int(os.environ["GITHUB_REPOSITORY_ID"]),
+                                   "ref": "master", "sha": os.environ["GITHUB_SHA"]}}
+          request = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                           headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  print("Vercel accepted deployment", json.load(response)["id"])
+          except urllib.error.HTTPError as error:
+              raise SystemExit(f"Vercel rejected deployment (HTTP {error.code}). Check the team, token and Git integration.")
+      - name: Verify the public frontend revision
+        shell: bash
+        run: |
+          for attempt in {1..60}; do
+            revision=$(curl -fsS --max-time 5 "https://bet-builder-frontend.vercel.app/api/release?check=$(date +%s)" | jq -r .revision) || revision=""
+            if [[ "$revision" == "$GITHUB_SHA" ]]; then
+              echo "Production serves $revision"
+              exit 0
+            fi
+            sleep 8
+          done
+          echo "::error::Production did not report the selected commit. Check Vercel deployment logs."
+          exit 1
