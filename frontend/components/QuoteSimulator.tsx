@@ -10,7 +10,7 @@ const FEES = [
   { rate: 0.07, label: "0.07·P(1−P)" },
 ];
 
-const usd0 = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const usd0 = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 4 });
 const signedC = (v: number) => `${v >= 0 ? "+" : "−"}${cents(Math.abs(v))}`;
 
 function placementText(p: Placement, gap: number | null, queue: number | null): { text: string; cls: string } {
@@ -48,7 +48,7 @@ function VenueRow({ p }: { p: VenuePlacement }) {
   );
 }
 
-export default function QuoteSimulator({ row, rows, onSelect }: { row: MakerRow | null; rows: MakerRow[]; onSelect: (s: number) => void }) {
+export default function QuoteSimulator({ asset, row, rows, onSelect }: { asset: string; row: MakerRow | null; rows: MakerRow[]; onSelect: (s: number) => void }) {
   const [anchor, setAnchor] = useState<Anchor>("fair");
   const [half, setHalf] = useState(2); // cents
   const [skew, setSkew] = useState(0); // cents
@@ -66,7 +66,7 @@ export default function QuoteSimulator({ row, rows, onSelect }: { row: MakerRow 
       </div>
 
       <label className="block">
-        <span className="label">Strike (BTC ≥)</span>
+        <span className="label">{asset} strike</span>
         <select className="input" value={row?.strike ?? ""} onChange={(e) => onSelect(Number(e.target.value))}>
           {rows.map((r) => (
             <option key={r.strike} value={r.strike}>
@@ -84,10 +84,10 @@ export default function QuoteSimulator({ row, rows, onSelect }: { row: MakerRow 
               key={a}
               type="button"
               role="radio"
-              aria-checked={anchor === a}
+              aria-checked={effectiveAnchor === a}
               onClick={() => setAnchor(a)}
               disabled={a === "fair" && row?.fair === null}
-              className={`seg ${anchor === a ? "seg-on" : ""} disabled:opacity-40`}
+              className={`seg ${effectiveAnchor === a ? "seg-on" : ""} disabled:opacity-40`}
             >
               {a === "fair" ? "Options fair value" : "Book mid"}
             </button>
@@ -178,7 +178,7 @@ export default function QuoteSimulator({ row, rows, onSelect }: { row: MakerRow 
           )}
           <p className="muted text-xs">
             Edge is per contract against the {effectiveAnchor === "fair" ? "options fair value" : "book mid"}, after the maker fee you picked.
-            One filled side leaves you holding BTC price risk until the other side fills or you hedge.
+            One filled side leaves you holding {asset} price risk until the other side fills or you hedge.
           </p>
         </div>
       )}

@@ -1,14 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ASSET_GROUPS } from "@/lib/assets";
 import MakerChart from "@/components/MakerChart";
 import QuoteSimulator from "@/components/QuoteSimulator";
 import { ApiError, getExpiries, getLadder } from "@/lib/api";
 import { cents, expiryLabel, pct, venueName } from "@/lib/format";
-import { summarize, toMakerRow, type MakerRow, type Touch } from "@/lib/maker";
+import { VENUES, summarize, toMakerRow, type MakerRow, type Touch } from "@/lib/maker";
 
 const signed = (v: number) => `${v >= 0 ? "+" : "−"}${cents(Math.abs(v))}`;
-const usd0 = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const usd0 = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
 function TouchCell({ t }: { t: Touch | null }) {
   if (!t) return <span className="muted">–</span>;
@@ -32,6 +33,13 @@ function Tile({ label, value, sub }: { label: string; value: React.ReactNode; su
 }
 
 export default function MakerDesk() {
+  const [symbol, setSymbol] = useState("BTC");
+  return <MarketDesk key={symbol} symbol={symbol} onAsset={setSymbol} />;
+}
+
+function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string) => void}) {
+  const asset = symbol.replace(/x$/, "");
+  const sequence = useRef(0);
   const [expiries, setExpiries] = useState<string[]>([]);
   const [expiry, setExpiry] = useState("");
   const [rows, setRows] = useState<MakerRow[] | null>(null);
@@ -39,28 +47,33 @@ export default function MakerDesk() {
   const [selected, setSelected] = useState<number | null>(null);
   const [updated, setUpdated] = useState<Date | null>(null);
   const [auto, setAuto] = useState(true);
-  const [onlyBoth, setOnlyBoth] = useState(true);
+  const [onlyBoth, setOnlyBoth] = useState(false);
 
   useEffect(() => {
-    getExpiries()
+    const refreshDates = () => getExpiries(asset)
       .then((e) => {
         setExpiries(e);
-        setExpiry((cur) => cur || e[e.length - 1] || "");
+        setExpiry((cur) => e.includes(cur) ? cur : e[0] || "");
       })
       .catch((e) => setErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0)));
-  }, []);
+    refreshDates();
+    const timer = setInterval(refreshDates, 60_000);
+    return () => clearInterval(timer);
+  }, [asset]);
 
   const load = useCallback(async (exp: string, quiet = false) => {
+    const request = ++sequence.current;
     if (!quiet) setRows(null);
     setErr(null);
     try {
-      const data = (await getLadder(exp)).map(toMakerRow).sort((a, b) => a.strike - b.strike);
+      const data = (await getLadder(exp, asset)).map(toMakerRow).sort((a, b) => a.strike - b.strike);
+      if (sequence.current !== request) return;
       setRows(data);
       setUpdated(new Date());
       setSelected((cur) => {
         if (cur !== null && data.some((r) => r.strike === cur)) return cur;
         // Default to the two-venue strike whose fair value is closest to 50¢: the most active part of the book.
-        const pool = data.filter((r) => r.quotes.gemini && r.quotes.kalshi);
+        const pool = data.filter((r) => VENUES.filter(v => r.quotes[v]).length > 1);
         const pick = (pool.length ? pool : data).reduce<MakerRow | null>(
           (a, b) => (!a || Math.abs((b.fair ?? b.mid ?? 0) - 0.5) < Math.abs((a.fair ?? a.mid ?? 0) - 0.5) ? b : a),
           null,
@@ -68,9 +81,10 @@ export default function MakerDesk() {
         return pick?.strike ?? null;
       });
     } catch (e) {
+      if (sequence.current !== request) return;
       setErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0));
     }
-  }, []);
+  }, [asset]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -83,7 +97,7 @@ export default function MakerDesk() {
     return () => clearInterval(id);
   }, [auto, expiry, load]);
 
-  const view = useMemo(() => (rows ? (onlyBoth ? rows.filter((r) => r.quotes.gemini && r.quotes.kalshi) : rows) : null), [rows, onlyBoth]);
+  const view = useMemo(() => (rows ? (onlyBoth ? rows.filter((r) => VENUES.filter(v => r.quotes[v]).length > 1) : rows) : null), [rows, onlyBoth]);
   const sum = useMemo(() => (view ? summarize(view) : null), [view]);
   const selRow = view?.find((r) => r.strike === selected) ?? rows?.find((r) => r.strike === selected) ?? null;
 
@@ -96,11 +110,13 @@ export default function MakerDesk() {
             Maker <span className="gradient-text">desk</span>
           </h1>
           <p className="muted">
-            One consolidated order book across Gemini and Kalshi, priced against the Deribit options surface. See who sets the best price, where
-            spreads are wide, and how a two-sided quote would sit in each venue&apos;s book.
+            Inspect available bids and asks, compare spreads and simulate a two-sided quote.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <select aria-label="Maker asset" className="input w-auto" value={symbol} onChange={e => onAsset(e.target.value)}>
+            {ASSET_GROUPS.map(g => <optgroup key={g.title} label={g.title}>{g.items.map(([value,name]) => <option key={value} value={value}>{name} ({value})</option>)}</optgroup>)}
+          </select>
           <select className="input w-auto" value={expiry} onChange={(e) => setExpiry(e.target.value)} aria-label="Expiry">
             {expiries.map((x) => (
               <option key={x} value={x}>
@@ -118,6 +134,7 @@ export default function MakerDesk() {
         </div>
       </header>
 
+      {symbol !== asset && <p className="note">{symbol} routes settle on the {asset} stock close. This desk shows those prediction contracts.</p>}
       {err && (
         <div role="alert" className="note note-bad flex flex-wrap items-center justify-between gap-3">
           <span>
@@ -148,8 +165,7 @@ export default function MakerDesk() {
               value={sum.medianSpread === null ? "–" : cents(sum.medianSpread)}
               sub={
                 <>
-                  Gemini avg {sum.avgVenueSpread.gemini === null ? "–" : cents(sum.avgVenueSpread.gemini)} · Kalshi avg{" "}
-                  {sum.avgVenueSpread.kalshi === null ? "–" : cents(sum.avgVenueSpread.kalshi)}
+                  {VENUES.filter(v => sum.avgVenueSpread[v] !== null).map(v => venueName(v)+" "+cents(sum.avgVenueSpread[v]!)).join(" · ")}
                 </>
               }
             />
@@ -157,8 +173,7 @@ export default function MakerDesk() {
               label="Who sets the best price"
               value={
                 <span className="flex items-baseline gap-3 text-xl">
-                  <span style={{ color: "var(--gemini)" }}>G {Math.round(sum.touchShare.gemini * 100)}%</span>
-                  <span style={{ color: "var(--kalshi)" }}>K {Math.round(sum.touchShare.kalshi * 100)}%</span>
+                  {VENUES.filter(v => sum.topDepth[v] > 0).map(v => <span key={v}>{venueName(v)} {Math.round(sum.touchShare[v]*100)}%</span>)}
                 </span>
               }
               sub={`Share of best bids and asks, ${sum.bothVenues} strikes on both venues (ties count for both)`}
@@ -192,21 +207,21 @@ export default function MakerDesk() {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="font-semibold">Implied probability curve</h2>
-                <p className="muted text-xs">Price of &ldquo;BTC ≥ strike&rdquo; on each venue vs the Deribit options-implied value. Red rings mark crossed markets.</p>
+                <p className="muted text-xs">Price of &ldquo;{asset} closing above the listed threshold&rdquo; on each venue vs the Deribit options-implied value. Red rings mark crossed markets.</p>
               </div>
               <span className="muted text-xs">{updated ? `Updated ${updated.toLocaleTimeString()}` : ""}</span>
             </div>
-            <MakerChart rows={view} selected={selected} onSelect={setSelected} />
+            <MakerChart asset={asset} rows={view} selected={selected} onSelect={setSelected} />
           </section>
 
           <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
-            <QuoteSimulator row={selRow} rows={view} onSelect={setSelected} />
+            <QuoteSimulator asset={asset} row={selRow} rows={view} onSelect={setSelected} />
 
             <section className="card overflow-hidden p-0 sm:p-0">
               <div className="flex flex-wrap items-center justify-between gap-2 p-5 pb-3">
                 <div>
                   <h2 className="font-semibold">Consolidated book</h2>
-                  <p className="muted text-xs">Best bid and ask across both venues. Click a row to quote it.</p>
+                  <p className="muted text-xs">Best bid and ask across listed venues. Click a row to quote it.</p>
                 </div>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={onlyBoth} onChange={(e) => setOnlyBoth(e.target.checked)} className="accent-[var(--accent)]" />
@@ -241,7 +256,7 @@ export default function MakerDesk() {
                             </span>
                           )}
                           {r.locked && <span className="pill ml-2">locked</span>}
-                          {(r.stale.gemini || r.stale.kalshi) && <span className="pill pill-warn ml-2">stale</span>}
+                          {Object.values(r.stale).some(Boolean) && <span className="pill pill-warn ml-2">stale</span>}
                         </td>
                         <td className="px-3 py-2.5">
                           <TouchCell t={r.bestBid} />
@@ -264,7 +279,7 @@ export default function MakerDesk() {
           </div>
 
           <p className="muted text-xs">
-            Top-of-book only, from public data refreshed every ~30s. Gemini settles on its own BTC index and Kalshi on CF Benchmarks BRTI, so
+            Top-of-book only, from public data refreshed every ~30s. Gemini settles on its own index and other venues use their contract-specific references, so
             &ldquo;crossed&rdquo; prices are not risk-free. Fair value is a risk-neutral options estimate. Analysis only; nothing is traded for you.
           </p>
         </>

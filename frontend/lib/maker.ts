@@ -3,8 +3,8 @@
 
 import type { LadderRow, VenueQuote } from "./types";
 
-export type Venue = "gemini" | "kalshi";
-export const VENUES: Venue[] = ["gemini", "kalshi"];
+export type Venue = "gemini" | "kalshi" | "polymarket";
+export const VENUES: Venue[] = ["gemini", "kalshi", "polymarket"];
 
 /** Taker fee per contract, same formula as engine/fees.py: 0.07 * P * (1 - P). */
 export const TAKER_RATE = 0.07;
@@ -46,7 +46,7 @@ function touch(q: VenueQuote | null, side: "bid" | "ask", venue: Venue): Touch |
 }
 
 export function toMakerRow(r: LadderRow): MakerRow {
-  const quotes: Record<Venue, VenueQuote | null> = { gemini: r.gemini, kalshi: r.kalshi };
+  const quotes: Record<Venue, VenueQuote | null> = { gemini: r.gemini, kalshi: r.kalshi, polymarket: r.polymarket ?? null };
   const bids = VENUES.map((v) => touch(quotes[v], "bid", v)).filter((t): t is Touch => !!t);
   const asks = VENUES.map((v) => touch(quotes[v], "ask", v)).filter((t): t is Touch => !!t);
   const bestBid = bids.length ? bids.reduce((a, b) => (b.px > a.px ? b : a)) : null;
@@ -73,7 +73,7 @@ export function toMakerRow(r: LadderRow): MakerRow {
   return {
     strike: r.strike,
     quotes,
-    stale: r.stale ?? { gemini: false, kalshi: false },
+    stale: { ...r.stale, polymarket: !!r.stale?.polymarket },
     fair: r.fair,
     bestBid,
     bestAsk,
@@ -113,10 +113,10 @@ export interface DeskSummary {
 }
 
 export function summarize(rows: MakerRow[]): DeskSummary {
-  const both = rows.filter((r) => r.quotes.gemini && r.quotes.kalshi);
-  const touchShare: Record<Venue, number> = { gemini: 0, kalshi: 0 };
+  const both = rows.filter((r) => VENUES.filter(v => r.quotes[v]).length > 1);
+  const touchShare: Record<Venue, number> = { gemini: 0, kalshi: 0, polymarket: 0 };
   let touches = 0;
-  for (const r of both) {
+  for (const r of rows) {
     for (const side of ["bid", "ask"] as const) {
       const best = side === "bid" ? r.bestBid : r.bestAsk;
       if (!best) continue;
@@ -126,7 +126,7 @@ export function summarize(rows: MakerRow[]): DeskSummary {
   }
   if (touches) for (const v of VENUES) touchShare[v] /= touches;
 
-  const topDepth: Record<Venue, number> = { gemini: 0, kalshi: 0 };
+  const topDepth: Record<Venue, number> = { gemini: 0, kalshi: 0, polymarket: 0 };
   for (const r of rows) for (const v of VENUES) topDepth[v] += (r.quotes[v]?.bid_size ?? 0) + (r.quotes[v]?.ask_size ?? 0);
 
   const withFair = rows.filter((r) => r.midVsFair !== null);
@@ -139,6 +139,7 @@ export function summarize(rows: MakerRow[]): DeskSummary {
     bothVenues: both.length,
     medianSpread: median(rows.map((r) => r.spread).filter((x): x is number => x !== null)),
     avgVenueSpread: {
+      polymarket: mean(rows.map(r => r.venueSpread.polymarket).filter((x): x is number => x !== null)),
       gemini: mean(rows.map((r) => r.venueSpread.gemini).filter((x): x is number => x !== null)),
       kalshi: mean(rows.map((r) => r.venueSpread.kalshi).filter((x): x is number => x !== null)),
     },
@@ -216,7 +217,7 @@ export function simulateQuote(row: MakerRow, input: QuoteInput): QuoteResult | n
   let ask = clampPx(toCent(ref + input.halfWidth + input.skew, "ceil"));
   if (ask <= bid) ask = clampPx(bid + 0.01);
 
-  const placements: VenuePlacement[] = VENUES.map((v) => {
+  const placements: VenuePlacement[] = VENUES.filter(v => row.quotes[v]).map((v) => {
     const b = place(bid, "bid", row.quotes[v]);
     const a = place(ask, "ask", row.quotes[v]);
     return { venue: v, bid: b.p, ask: a.p, bidGap: b.gap, askGap: a.gap, bidQueue: b.queue, askQueue: a.queue };

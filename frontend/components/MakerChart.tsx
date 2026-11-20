@@ -10,15 +10,16 @@ const PAD = { l: 44, r: 16, t: 14, b: 34 };
 const SERIES = [
   { key: "gemini", label: "Gemini mid", color: "var(--gemini)", dash: undefined },
   { key: "kalshi", label: "Kalshi mid", color: "var(--kalshi)", dash: undefined },
+  { key: "polymarket", label: "Polymarket mid", color: "var(--accent)", dash: undefined },
   { key: "fair", label: "Options fair (Deribit)", color: "var(--fair)", dash: "5 4" },
 ] as const;
 
 type Key = (typeof SERIES)[number]["key"];
 
 const valueOf = (r: MakerRow, k: Key) => (k === "fair" ? r.fair : r.venueMid[k]);
-const kfmt = (s: number) => `$${(s / 1000).toFixed(s % 1000 ? 1 : 0)}k`;
+const kfmt = (s: number) => s.toLocaleString("en-US", {maximumFractionDigits: 4});
 
-export default function MakerChart({ rows, selected, onSelect }: { rows: MakerRow[]; selected: number | null; onSelect: (strike: number) => void }) {
+export default function MakerChart({ asset, rows, selected, onSelect }: { asset: string; rows: MakerRow[]; selected: number | null; onSelect: (strike: number) => void }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(720);
   const [hover, setHover] = useState<number | null>(null);
@@ -75,7 +76,7 @@ export default function MakerChart({ rows, selected, onSelect }: { rows: MakerRo
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs" aria-label="Legend">
-        {SERIES.map((s) => (
+        {SERIES.filter(s => rows.some(r => valueOf(r,s.key) !== null)).map((s) => (
           <span key={s.key} className="flex items-center gap-2">
             <svg width="22" height="8" aria-hidden>
               <line x1="1" x2="21" y1="4" y2="4" stroke={s.color} strokeWidth="2" strokeDasharray={s.dash} strokeLinecap="round" />
@@ -94,7 +95,7 @@ export default function MakerChart({ rows, selected, onSelect }: { rows: MakerRo
           width={w}
           height={H}
           role="img"
-          aria-label="Probability of BTC finishing at or above each strike, by venue mid price and options fair value"
+          aria-label="Closing-price probability by strike, by venue mid price and options fair value"
           onMouseMove={(e) => {
             const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
             setHover(nearest(e.clientX - r.left));
@@ -123,7 +124,7 @@ export default function MakerChart({ rows, selected, onSelect }: { rows: MakerRo
             <line x1={x(selected)} x2={x(selected)} y1={PAD.t} y2={H - PAD.b} stroke="var(--accent)" strokeWidth="1.5" />
           )}
 
-          {SERIES.map((s) => (
+          {SERIES.filter(s => rows.some(r => valueOf(r,s.key) !== null)).map((s) => (
             <path key={s.key} d={paths[s.key]} fill="none" stroke={s.color} strokeWidth="2" strokeDasharray={s.dash} strokeLinejoin="round" strokeLinecap="round" />
           ))}
 
@@ -153,7 +154,7 @@ export default function MakerChart({ rows, selected, onSelect }: { rows: MakerRo
             className="pointer-events-none absolute top-2 w-48 rounded-lg border border-line p-2.5 text-xs shadow-lg"
             style={{ left: tipLeft, background: "var(--panel-2)" }}
           >
-            <div className="mb-1 font-semibold">BTC ≥ {hv.strike.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}</div>
+            <div className="mb-1 font-semibold">{asset} strike {hv.strike.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 4 })}</div>
             {SERIES.map((s) => {
               const v = valueOf(hv, s.key);
               return (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ASSET_GROUPS } from "@/lib/assets";
 import TokenQuote from "@/components/TokenQuote";
 import BetForm from "@/components/BetForm";
 import RouteCard from "@/components/RouteCard";
@@ -68,12 +69,6 @@ export default function AssetBuilder() {
     </>
   );
 }
-
-const ASSET_GROUPS = [
-  { title: "Cryptocurrencies", items: [["BTC","Bitcoin"], ["ETH","Ethereum"], ["SOL","Solana"]] },
-  { title: "Stocks", items: [["AAPL","Apple"], ["NVDA","NVIDIA"], ["MSFT","Microsoft"], ["TSLA","Tesla"]] },
-  { title: "Tokenized stocks · RWAs", items: [["AAPLx","Apple xStock"], ["NVDAx","NVIDIA xStock"]] },
-];
 
 function Builder({ asset, symbol }: { asset: string; symbol: string }) {
   const [expiries, setExpiries] = useState<string[]>([]);
