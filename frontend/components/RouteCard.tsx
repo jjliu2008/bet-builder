@@ -1,5 +1,5 @@
 import type { Route, RouteRequest, VerdictCode } from "@/lib/types";
-import { buildLabel, cents, expiryLabel, num, pct, usd, venueName } from "@/lib/format";
+import { buildLabel, cents, expiryLabel, isStockOutcome, num, pct, usd, venueName } from "@/lib/format";
 import GrokExplanation from "./GrokExplanation";
 import Warnings from "./Warnings";
 import SettlementChart from "./SettlementChart";
@@ -8,8 +8,8 @@ import MarketQualityPanel from "./MarketQualityPanel";
 
 function describe(r: RouteRequest): string {
   const e = expiryLabel(r.expiry);
-  if (r.type === "above") return `${r.asset} at or above ${usd(r.lo ?? r.hi ?? 0, 0)} at ${e}`;
-  if (r.type === "below") return `${r.asset} below ${usd(r.hi ?? r.lo ?? 0, 0)} at ${e}`;
+  if (r.type === "above") return `${r.asset} ${isStockOutcome(r.asset) ? "above" : "at or above"} ${usd(r.lo ?? r.hi ?? 0, 0)} at ${e}`;
+  if (r.type === "below") return `${r.asset} ${isStockOutcome(r.asset) ? "at or below" : "below"} ${usd(r.hi ?? r.lo ?? 0, 0)} at ${e}`;
   return `${r.asset} between ${usd(r.lo ?? 0, 0)} and ${usd(r.hi ?? 0, 0)} at ${e}`;
 }
 
@@ -47,7 +47,7 @@ export default function RouteCard({ route, request }: { route: Route; request: R
   const hasStale = (route.stale_warnings ?? []).length > 0;
   const partial = route.filled_size !== undefined && route.size !== undefined && route.filled_size < route.size;
   // Equity demo books use DEMO- contract ids; anything that is not live BTC data is a simulation.
-  const simulated = request.asset !== "BTC" || route.legs.some((l) => l.contract.startsWith("DEMO-"));
+  const simulated = route.legs.some((l) => l.contract.startsWith("DEMO-"));
 
   return (
     <section className={`card space-y-5 ${simulated ? "" : "card-glow"}`} style={simulated ? { borderStyle: "dashed", borderColor: "var(--warn)" } : undefined}>

@@ -72,7 +72,9 @@ export default function AssetBuilder() {
           ))}
         </div>
       </section>
-      {asset !== "BTC" ? <TokenQuote key={asset} symbol={asset} /> : <Builder key={asset} asset={asset} />}
+      {asset !== "BTC" && <TokenQuote key={asset} symbol={asset} />}
+      {asset.endsWith("x") && <p className="note my-3">The route below settles on the underlying stock’s close. The token has its own spot price.</p>}
+      <Builder key={"route-"+asset} asset={asset.replace(/x$/, "")} />
     </>
   );
 }

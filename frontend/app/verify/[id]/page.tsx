@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
-import { usd, expiryLabel, venueName } from "@/lib/format";
+import { isStockOutcome, usd, expiryLabel, venueName } from "@/lib/format";
 import { ApiError, getVerify } from "@/lib/api";
 import type { Verification } from "@/lib/types";
 
@@ -44,7 +44,7 @@ export default function VerifyPage({ params }: { params: Promise<{ id: string }>
             </p>
             {quote && <section className="leg space-y-1">
               <h2 className="font-semibold">Saved quote</h2>
-              {req && <p>{req.asset} {req.type === "between" ? `from ${usd(req.lo!)} to below ${usd(req.hi!)}` : req.type === "above" ? `at or above ${usd(req.lo ?? req.hi!)}` : `below ${usd(req.hi ?? req.lo!)}`} at {expiryLabel(req.expiry)}</p>}
+              {req && <p>{req.asset} {req.type === "between" ? `${isStockOutcome(req.asset) ? "above" : "from"} ${usd(req.lo!)} to ${isStockOutcome(req.asset) ? "and including" : "below"} ${usd(req.hi!)}` : req.type === "above" ? `${isStockOutcome(req.asset) ? "above" : "at or above"} ${usd(req.lo ?? req.hi!)}` : `${isStockOutcome(req.asset) ? "at or below" : "below"} ${usd(req.hi ?? req.lo!)}`} at {expiryLabel(req.expiry)}</p>}
               {quote.timestamp && <p>Quoted {new Date(quote.timestamp).toUTCString()}</p>}
               <p>{quote.venues.map(venueName).join(" + ")}</p>
               {quote.cash_outlay != null && quote.filled_size != null && <p>{usd(quote.cash_outlay * quote.filled_size)} upfront for {quote.filled_size} contracts</p>}

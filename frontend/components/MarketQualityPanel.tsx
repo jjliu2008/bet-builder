@@ -25,13 +25,14 @@ export default function MarketQualityPanel({ mq }: { mq: MarketQuality }) {
       </div>
       <div>
         <div className="mb-1 flex justify-between text-xs">
-          <span className="muted">Risk score</span>
+          <span className="muted">Quote risk score</span>
           <span className="num">{score}/100</span>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: "var(--line)" }} role="meter" aria-valuenow={score} aria-valuemin={0} aria-valuemax={100} aria-label="Risk score">
           <div className="h-full rounded-full" style={{ width: `${score}%`, background: barColor }} />
         </div>
       </div>
+      {mq.observed_spread_cents != null && <p className="text-xs muted">Widest quoted spread: {mq.observed_spread_cents}¢ · Oldest quote: {mq.oldest_quote_seconds}s. Measures quote quality, not the chance of losing.</p>}
       {mq.findings.length > 0 && (
         <ul className="space-y-1 text-sm">
           {mq.findings.map((f, i) => (

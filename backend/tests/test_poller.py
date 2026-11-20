@@ -265,7 +265,7 @@ def test_settings_from_env(monkeypatch):
               "DERIBIT_RPS", "VENUE_CONCURRENCY"):
         monkeypatch.delenv(k, raising=False)
     d = Settings.from_env()
-    assert (d.poll_interval_s, d.n_expiries, d.window_pct, d.kalshi_rps) == (30.0, 3, 0.03, 12.0)
+    assert (d.poll_interval_s, d.n_expiries, d.window_pct, d.kalshi_rps) == (30.0, 8, 0.03, 12.0)
     monkeypatch.setenv("POLL_INTERVAL_S", "10")
     monkeypatch.setenv("KALSHI_RPS", "4.5")
     monkeypatch.setenv("N_EXPIRIES", "2")

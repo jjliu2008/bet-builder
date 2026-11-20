@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { BetType, LadderRow, RouteRequest } from "@/lib/types";
-import { expiryLabel } from "@/lib/format";
+import { expiryLabel, isStockOutcome } from "@/lib/format";
 
 import { getLadder } from "@/lib/api";
 
@@ -44,7 +44,7 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
 
   const rows = ladder?.expiry === chosen ? ladder.rows : [];
   function hasDepth(row: LadderRow, side: "bid" | "ask") {
-    return (["gemini", "kalshi"] as const).some(venue => {
+    return (["gemini", "kalshi", "polymarket"] as const).some(venue => {
       const q = row[venue];
       const depth = (side === "ask" ? q?.ask_size : q?.bid_size) ?? 0;
       return q && !row.stale[venue] && q[side] !== null && depth > 0 && depth >= Number(size);
@@ -56,7 +56,7 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
   let center = rows[Math.floor(rows.length / 2)]?.strike ?? 0;
   let smallestGap = Infinity;
   for (const row of rows) {
-    const quotes = (["gemini", "kalshi"] as const).flatMap(venue => {
+    const quotes = (["gemini", "kalshi", "polymarket"] as const).flatMap(venue => {
       const q = row[venue];
       return !row.stale[venue] && q && q.bid !== null && q.ask !== null && q.bid <= q.ask
         ? [(q.bid + q.ask) / 2] : [];
@@ -149,30 +149,36 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
       <div className="grid grid-cols-2 gap-3">
         {type === "above" && (
           <label className="block col-span-2">
-            <span className="label">At or above ($)</span>
+            <span className="label">{isStockOutcome(asset) ? "Above ($)" : "At or above ($)"}</span>
             <input className="input" list="listed-strikes" inputMode="decimal" value={lo} onChange={(e) => setLo(e.target.value)} />
           </label>
         )}
         {type === "below" && (
           <label className="block col-span-2">
-            <span className="label">Below ($)</span>
+            <span className="label">{isStockOutcome(asset) ? "At or below ($)" : "Below ($)"}</span>
             <input className="input" list="listed-strikes" inputMode="decimal" value={hi} onChange={(e) => setHi(e.target.value)} />
           </label>
         )}
         {type === "between" && (
           <>
             <label className="block">
-              <span className="label">From ($)</span>
+              <span className="label">{isStockOutcome(asset) ? "Above ($)" : "From ($)"}</span>
               <input className="input" list="listed-strikes" inputMode="decimal" value={lo} onChange={(e) => setLo(e.target.value)} />
             </label>
             <label className="block">
-              <span className="label">Up to, but below ($)</span>
+              <span className="label">{isStockOutcome(asset) ? "Up to and including ($)" : "Up to, but below ($)"}</span>
               <input className="input" list="listed-strikes" inputMode="decimal" value={hi} onChange={(e) => setHi(e.target.value)} />
             </label>
           </>
         )}
       </div>
 
+      {rows.length > 0 && <div className="flex flex-wrap gap-2 text-xs" aria-label="Examples from this market">
+        {TYPES.map(example => <button key={example.id} type="button" className="link"
+          onClick={() => { setType(example.id); setLo(null); setHi(null); setError(null); }}>
+          Try {example.label.toLowerCase()} near the market center
+        </button>)}
+      </div>}
       <label className="block">
         <span className="label">Size (contracts)</span>
         <input className="input" inputMode="decimal" value={size} onChange={(e) => setSize(e.target.value)} />

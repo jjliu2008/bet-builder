@@ -97,3 +97,16 @@ Apple strikes are $220/$230 and NVIDIA strikes are $170/$180. Use the standard
 expiries, ladder and route endpoints with the ticker as the asset. BTC uses its
 existing data source. Stock scenarios have illustrative fees, no independent
 options benchmark and no live venue listing or tokenized-share ownership.
+
+For live non-BTC routes the same quote checks run on the selected contracts.
+The score includes a continuous component capped at 25 points, using the larger of
+2.5 points per cent of spread and 25 points per minute of quote age. More severe
+findings take precedence. The UI displays the widest spread and oldest observation
+alongside the score. This measures execution conditions, not outcome probability.
+
+ETH and SOL use listed Gemini and Kalshi thresholds. Equity routes use open
+Polymarket stock-close thresholds and actual YES and NO ask depth. For those
+contracts the lower threshold is exclusive and the upper threshold inclusive.
+The tokenized equity tabs show a token spot reference alongside a separately
+labeled route on the underlying stock. Available dates follow each venue's
+catalog. Only ETH and BTC currently have a Deribit options comparison.

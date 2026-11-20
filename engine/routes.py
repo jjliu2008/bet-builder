@@ -566,6 +566,7 @@ def build_ladder(books: Sequence[Book], asset: str, expiry: str,
         f = (fair or {}).get(k)
         rows.append({
             "strike": k,
+            **({"polymarket": _quote(by_venue["polymarket"])} if "polymarket" in by_venue else {}),
             "gemini": _quote(by_venue.get("gemini")),
             "kalshi": _quote(by_venue.get("kalshi")),
             "fair": None if f is None else round(f, 4),

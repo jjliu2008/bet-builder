@@ -20,7 +20,7 @@ from typing import List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .fees import order_fee
+from .fees import FEE_RATE, order_fee
 
 Side = Literal["YES", "NO"]
 Kind = Literal["threshold", "bucket"]
@@ -88,6 +88,7 @@ class Book(BaseModel):
         asset: the underlying, e.g. "BTC".
     """
     venue: str
+    fee_rate: float = Field(default=FEE_RATE, ge=0, le=1)
     contract_id: str
     strike: Optional[float] = None
     expiry: datetime
@@ -215,7 +216,9 @@ def cost_to_buy(book: Book, side: Side, size: float, round_fees: bool = True) ->
         remaining -= take
     filled = float(sum(c for _, c in hit))
     notional = float(sum(p * c for p, c in hit))
-    fee = order_fee(hit, round_per_order=round_fees) if hit else 0.0
+    fee = order_fee(hit, round_per_order=round_fees and book.venue != "polymarket", rate=book.fee_rate) if hit else 0.0
+    if book.venue == "polymarket":
+        fee = round(fee, 5)
     return Fill(
         book=book, side=side, requested=float(size), filled=filled,
         avg_price=(notional / filled) if filled > 0 else 0.0,

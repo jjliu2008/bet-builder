@@ -17,31 +17,40 @@ function Quote({ q, stale, reason, best }: { q: VenueQuote | null; stale: boolea
 }
 
 export default function LadderPage() {
+  const [asset, setAsset] = useState("BTC");
+  return <><label className="mx-auto mt-4 block w-full max-w-5xl px-4">Outcome market
+    <select className="input" value={asset} onChange={e => setAsset(e.target.value)}>
+      {["BTC","ETH","SOL","AAPL","NVDA","MSFT","TSLA"].map(a => <option key={a}>{a}</option>)}
+    </select></label><AssetLadder key={asset} asset={asset} /></>;
+}
+
+function AssetLadder({asset}: {asset: string}) {
   const [expiries, setExpiries] = useState<string[]>([]);
   const [expiry, setExpiry] = useState("");
   const [rows, setRows] = useState<LadderRow[] | null>(null);
   const [err, setErr] = useState<ApiError | null>(null);
-  const [onlyBoth, setOnlyBoth] = useState(true);
+  const [onlyBoth, setOnlyBoth] = useState(asset === "BTC");
   const shown = rows ? (onlyBoth ? rows.filter((r) => r.gemini && r.kalshi) : rows) : null;
 
   useEffect(() => {
-    getExpiries()
+    getExpiries(asset)
       .then((e) => {
         setExpiries(e);
+        if (!e.length) setRows([]);
         setExpiry((cur) => cur || e[e.length - 1] || "");
       })
       .catch((e) => setErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0)));
-  }, []);
+  }, [asset]);
 
   const load = useCallback(async (exp: string) => {
     setRows(null);
     setErr(null);
     try {
-      setRows(await getLadder(exp));
+      setRows(await getLadder(exp, asset));
     } catch (e) {
       setErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0));
     }
-  }, []);
+  }, [asset]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -55,7 +64,7 @@ export default function LadderPage() {
           Strike <span className="gradient-text">ladder</span>
         </h1>
         <p className="muted max-w-2xl">
-          The contract &ldquo;BTC ≥ strike&rdquo; on each venue, shown as bid / ask, next to the Deribit options-implied probability. Green marks
+          Listed {asset} thresholds show the current bid and ask. Fair value appears when an independent options benchmark is available. Green marks
           the cheaper ask when both venues list a strike. For spreads, crossed markets and quoting, open the{" "}
           <Link href="/maker" className="link">
             maker desk
@@ -93,6 +102,7 @@ export default function LadderPage() {
                 <th>Strike</th>
                 <th style={{ color: "var(--gemini)" }}>Gemini</th>
                 <th style={{ color: "var(--kalshi)" }}>Kalshi</th>
+                {shown.some(r => r.polymarket) && <th>Polymarket</th>}
                 <th className="text-right">Fair</th>
               </tr>
             </thead>
@@ -107,6 +117,7 @@ export default function LadderPage() {
                     <td className="p-3 font-medium">{usd(r.strike, 0)}</td>
                     <td className="p-3"><Quote q={r.gemini} stale={r.stale.gemini} reason={r.stale_reasons?.gemini} best={cheapest === "gemini"} /></td>
                     <td className="p-3"><Quote q={r.kalshi} stale={r.stale.kalshi} reason={r.stale_reasons?.kalshi} best={cheapest === "kalshi"} /></td>
+                    {shown.some(row => row.polymarket) && <td className="p-3"><Quote q={r.polymarket ?? null} stale={!!r.stale.polymarket} best={false} /></td>}
                     <td className="p-3 text-right">{r.fair === null ? <span className="muted">n/a</span> : pct(r.fair)}</td>
                   </tr>
                 );

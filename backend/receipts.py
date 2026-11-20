@@ -57,6 +57,10 @@ def _parse_body(body: Any) -> tuple:
         route = Route.model_validate(raw_route).model_dump(mode="json", exclude={"grok_snapshot"})
         if "market_quality" not in raw_route:
             route.pop("market_quality", None)
+        elif isinstance(raw_route.get("market_quality"), dict):
+            for metric in ("observed_spread_cents", "oldest_quote_seconds"):
+                if metric not in raw_route["market_quality"]:
+                    route["market_quality"].pop(metric, None)
         request = RouteRequest.model_validate(raw_req).model_dump(mode="json") if raw_req is not None else None
     except ValidationError as e:
         raise HTTPException(422, f"Not a valid route receipt body: {e.errors()[0].get('msg', 'invalid')}")

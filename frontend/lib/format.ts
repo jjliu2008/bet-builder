@@ -18,3 +18,5 @@ export const venueName = (v: string) => (v ? v[0].toUpperCase() + v.slice(1) : v
 
 export const buildLabel = (b?: string) =>
   b === "single" ? "Single contract" : b === "two_leg" ? "Two-leg spread" : b === "buckets" ? "Native buckets" : (b ?? "Route");
+
+export const isStockOutcome = (symbol: string) => ["AAPL", "NVDA", "MSFT", "TSLA"].includes(symbol);

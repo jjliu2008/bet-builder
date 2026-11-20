@@ -8,12 +8,12 @@ export default function Home() {
         <div className="space-y-4">
           <span className="pill pill-accent">Prediction markets · Gemini × Kalshi · Solana receipts</span>
           <h1 className="text-4xl font-bold leading-[1.05] tracking-tight sm:text-5xl">
-            Where will Bitcoin finish?
+            Where will the price finish?
             <br />
             <span className="gradient-text">Compare the cost.</span>
           </h1>
           <p className="muted max-w-2xl text-lg">
-            Pick a price range and a date. See what it would cost on Gemini and Kalshi, how much you could receive, and where the quotes may be unreliable. You can also look up prices for stocks and other crypto.
+            Pick a price range and a date. See what it would cost on Gemini and Kalshi, how much you could receive, and where the quotes may be unreliable. Build stock-close routes from Polymarket and crypto routes from listed threshold contracts.
           </p>
           <div className="flex flex-wrap gap-3 text-sm">
             <Link href="/maker" className="btn-outline">

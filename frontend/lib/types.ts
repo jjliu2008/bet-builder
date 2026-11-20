@@ -73,11 +73,12 @@ export interface VenueQuote {
 }
 
 export interface LadderRow {
+  polymarket?: VenueQuote | null;
   strike: number;
   gemini: VenueQuote | null;
   kalshi: VenueQuote | null;
   fair: number | null;
-  stale: { gemini: boolean; kalshi: boolean };
+  stale: { gemini: boolean; kalshi: boolean; polymarket?: boolean };
   stale_reasons?: { gemini: string | null; kalshi: string | null };
 }
 
@@ -117,6 +118,8 @@ export interface MarketQualityFinding {
 }
 
 export interface MarketQuality {
+  observed_spread_cents?: number | null;
+  oldest_quote_seconds?: number | null;
   status: "clear" | "caution" | "review" | "unreliable" | string;
   risk_score: number;
   advisory_only?: boolean;

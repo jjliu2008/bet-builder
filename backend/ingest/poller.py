@@ -45,7 +45,7 @@ class Settings:
     """Poller configuration. `from_env()` reads the upper-case names from the environment."""
     asset: str = "BTC"
     poll_interval_s: float = 30.0     # POLL_INTERVAL_S
-    n_expiries: int = 3               # N_EXPIRIES: how many of the nearest matched expiries to poll
+    n_expiries: int = 8               # N_EXPIRIES: how many of the nearest matched expiries to poll
     min_expiry_hours: float = 0.0     # MIN_EXPIRY_HOURS: skip expiries closer than this (e.g. hourlies)
     window_pct: float = 0.03          # KALSHI_WINDOW_PCT: full Kalshi depth within this of spot
     gemini_rps: float = 5.0           # GEMINI_RPS

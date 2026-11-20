@@ -31,7 +31,9 @@ class MarketQuality(BaseModel):
     advisory_only: bool = True
     evaluated_at: str
     findings: List[QualityFinding] = Field(default_factory=list)
-    methodology: str = "visible_book_rules_v2"
+    observed_spread_cents: float | None = None
+    oldest_quote_seconds: float | None = None
+    methodology: str = "visible_book_rules_v3"
     unavailable_signals: List[str] = Field(default_factory=lambda: [
         "market_trained_anomaly_model", "market_threat_memory", "semantic_triage"])
 
@@ -115,7 +117,13 @@ def assess_market_quality(fills: Sequence[Fill], requested: float, filled: float
     # prevent untrained wallet/model components from implying market evidence.
     fusion = RiskFusionEngine(weights={"anomaly": 0, "rules": 1,
         "threat_similarity": 0, "gemini_semantic": 0})
-    score = fusion.deterministic_score(0, max((f.score for f in findings), default=0) / 100, 0)
+    spreads = [100 * (b.best_ask - b.best_bid) for b in books if b.mid is not None and b.best_bid <= b.best_ask]
+    ages = [max(0, (now - to_utc(b.updated)).total_seconds()) for b in books]
+    # Below warning thresholds, scale each measured signal up to 25 points.
+    baseline = min(25, max(max(spreads, default=0) * 2.5, max(ages, default=0) * 25 / 60))
+    score = fusion.deterministic_score(0, max(baseline, max((f.score for f in findings), default=0)) / 100, 0)
     status = {"ALLOW": "clear", "CHALLENGE": "caution", "REVIEW": "review",
               "RESTRICT": "unreliable"}[PolicyEngine().band(score)]
-    return MarketQuality(status=status, risk_score=score, evaluated_at=iso(now), findings=findings)
+    return MarketQuality(status=status, risk_score=score, evaluated_at=iso(now), findings=findings,
+                         observed_spread_cents=round(max(spreads), 2) if spreads else None,
+                         oldest_quote_seconds=round(max(ages), 1) if ages else None)

@@ -40,7 +40,7 @@ export default function TokenQuote({ symbol }: { symbol: string }) {
           <div className="h-4 w-64 animate-pulse rounded bg-line" />
         </div>
       )}
-      <p className="muted text-sm">Reference price as of the displayed time. Choose Bitcoin to price a prediction route.</p>
+      <p className="muted text-sm">Reference price as of the displayed time. The builder uses separately listed prediction contracts.</p>
       <button type="button" className="btn-outline" disabled={!quote && !error} onClick={refresh}>Refresh price</button>
     </section>
   );

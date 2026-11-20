@@ -30,7 +30,7 @@ def codes(result):
 
 def test_fresh_tight_book_is_clear_and_models_are_explicitly_unavailable():
     result = assess(book())
-    assert result.status == "clear" and result.risk_score == 0
+    assert result.status == "clear" and result.risk_score == 5
     assert result.advisory_only and not result.findings
     assert "market_trained_anomaly_model" in result.unavailable_signals
 
@@ -118,20 +118,28 @@ def test_reused_fusion_keeps_half_up_rounding_and_rejects_nan():
         engine.deterministic_score(0, float("nan"), 0)
 
 
-@pytest.mark.parametrize("symbol,lo,hi", [("AAPL", 220, 230), ("NVDA", 170, 180)])
-def test_stock_scenario_isolated_from_btc_feed(symbol, lo, hi):
+@pytest.mark.parametrize("symbol", ["ETH", "SOL", "AAPL", "NVDA", "TSLA", "MSFT", "AAPLx", "NVDAx"])
+def test_live_asset_route_uses_its_own_books(symbol, monkeypatch):
     from backend.app import create_app
+    from backend.asset_markets import AssetMarkets
     from backend.ingest.poller import State
 
+    async def snapshot(self, asset, expiry=None):
+        assert asset == symbol.removesuffix("x")
+        return [book(asset=asset)] if expiry else [EXP_KEY]
+
+    async def no_surface(self, asset):
+        return None
+
+    monkeypatch.setattr(AssetMarkets, "surface", no_surface)
+    monkeypatch.setattr(AssetMarkets, "get", snapshot)
     client = TestClient(create_app(state=State(now=lambda: NOW)))
-    expiry, = client.get("/expiries", params={"asset": symbol}).json()
-    result = client.post("/route", json={"asset": symbol, "expiry": expiry,
-        "type": "between", "lo": lo, "hi": hi, "size": 10})
+    assert client.get("/expiries", params={"asset": symbol}).json() == [EXP_KEY]
+    result = client.post("/route", json={"asset": symbol, "expiry": EXP_KEY,
+        "type": "above", "lo": 68000, "size": 10})
     assert result.status_code == 200, result.text
-    route = result.json()
-    assert all(symbol in leg["contract"] for leg in route["legs"])
-    assert route["market_quality"]["status"] == "clear"
-    assert route["fair_value"] is None and "synthetic" in route["warnings"][-1]
+    assert result.json()["market_quality"]["risk_score"] > 0
+    assert result.json()["grok_snapshot"]
     assert client.get("/expiries?asset=BTC").status_code == 503
 
 

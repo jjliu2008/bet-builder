@@ -12,7 +12,7 @@ Environment:
     ALLOWED_ORIGINS    comma-separated CORS origins, e.g. "http://localhost:3000,https://bet.example".
                        Default "*" (open). The frontend README uses this same name.
     POLL_INTERVAL_S    seconds between polls. Default 30.
-    N_EXPIRIES         nearest matched expiries to poll. Default 3.
+    N_EXPIRIES         nearest matched expiries to poll. Default 8.
     MIN_EXPIRY_HOURS   skip expiries closer than this many hours. Default 0.
     KALSHI_WINDOW_PCT  full Kalshi depth within this fraction of spot. Default 0.03.
     GEMINI_RPS, KALSHI_RPS, DERIBIT_RPS   requests per second per venue. Defaults 5, 12, 5.
@@ -38,7 +38,7 @@ from engine.fairvalue import fair_for_request, fair_hidden
 from engine.routes import RouteConfig
 from engine.stale import make_stale_fn, stale_flags
 
-from . import equity_demo, xstocks
+from . import asset_markets, xstocks
 from .grok import RouteExplainer
 from .ingest.poller import Poller, Settings, State
 from .logger import LogSettings, SnapshotLogger
@@ -46,7 +46,7 @@ from .receipt_store import ReceiptStore
 from .receipts import fingerprint, load_chain, make_router, retry_pending
 from .replay import Replayer
 
-SUPPORTED_ASSETS = ("BTC", *equity_demo.STRIKES)
+SUPPORTED_ASSETS = ("BTC", *sorted(asset_markets.EQUITIES), *asset_markets.CRYPTO)
 
 
 class Unavailable(RuntimeError):
@@ -60,6 +60,7 @@ def _origins() -> List[str]:
 
 def _asset(asset: str) -> str:
     a = asset.upper()
+    a = {"AAPLX": "AAPL", "NVDAX": "NVDA"}.get(a, a)
     if a not in SUPPORTED_ASSETS:
         raise HTTPException(422, f"Unsupported asset '{asset}'. Supported: {', '.join(SUPPORTED_ASSETS)}")
     return a
@@ -151,6 +152,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
                 await runner.aclose()
 
     app = FastAPI(title="bet-builder", version="0.1.0", lifespan=lifespan)
+    markets = asset_markets.AssetMarkets()
     explainer = RouteExplainer()
     app.post("/grok/explain")(explainer.explain)
     app.include_router(xstocks.router)
@@ -185,27 +187,25 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
         """Always HTTP 200 while the process is up; read `status` for data health."""
         return state.health()
 
-    def equity_books(asset: str, expiry: str):
-        try:
-            key = expiry_key(expiry)
-        except ValueError:
-            raise HTTPException(422, "Invalid expiry")
-        if key != equity_demo.EXPIRY:
-            raise HTTPException(404, f"No demo books for {asset} at {key}")
-        return equity_demo.books_for(asset)
-
     @app.get("/expiries")
     async def expiries(asset: str = Query("BTC")) -> List[str]:
-        if _asset(asset) in equity_demo.STRIKES:
-            return [equity_demo.EXPIRY]
+        if _asset(asset) != "BTC":
+            return await markets.get(_asset(asset))
         _ready(state)
         return state.live_expiries
 
     @app.get("/ladder")
     async def ladder(expiry: str, asset: str = Query("BTC")) -> List[dict]:
         asset = _asset(asset)
-        if asset in equity_demo.STRIKES:
-            return build_ladder(equity_books(asset, expiry), asset, expiry, now=equity_demo.AS_OF)
+        if asset != "BTC":
+            books = await markets.get(asset, expiry)
+            surface = await markets.surface(asset)
+            strikes = sorted({b.strike for b in books if b.strike is not None})
+            try:
+                fair = fair_above(asset, expiry, strikes, surface=surface) if surface and strikes else None
+            except (ValueError, KeyError):
+                fair = None
+            return build_ladder(books, asset, expiry, fair, stale_flags(books, expiry, fair))
         key, books = _books(state, expiry)
         fair, now = _fair(state, key, books), state.now()
         flags = stale_flags(books, key, fair, state.history.as_mapping(), state.spot_history, now)
@@ -214,9 +214,11 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     @app.get("/fair-value")
     async def fair_value(request: RouteRequest = Query()) -> dict:
         asset = _asset(request.asset)
-        if asset in equity_demo.STRIKES:
-            equity_books(asset, request.expiry)
-            return {"fair_value": None, "reason": "No equity options benchmark"}
+        if asset != "BTC":
+            await markets.get(asset, request.expiry)
+            surface = await markets.surface(asset)
+            value = fair_for_request(request, surface) if surface and not fair_hidden(request.expiry) else None
+            return {"fair_value": value, "reason": None if value is not None else "No benchmark for this expiry"}
         _books(state, request.expiry)
         if fair_hidden(request.expiry, state.now()):
             return {"fair_value": None, "reason": "Too close to expiry"}
@@ -227,21 +229,28 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     @app.post("/route", response_model=Route)
     async def route(body: RouteRequest) -> Route:
         body = body.model_copy(update={"asset": _asset(body.asset)})
-        if body.asset in equity_demo.STRIKES:
-            result = price_route(body, equity_books(body.asset, body.expiry), now=equity_demo.AS_OF, config=route_config)
-            result.warnings.append("Stock scenario uses synthetic venue quotes and illustrative fees.")
-            result.grok_snapshot = explainer.remember(body, result, "demo")
-            return result
-        key, books = _books(state, body.expiry)
-        fair, now = _fair(state, key, books), state.now()
-        history = state.history.as_mapping()
-        result = price_route(
-            body, books,
-            fair_fn=make_fair_fn(state.surface) if state.surface is not None else None,
-            stale_fn=make_stale_fn(books, key, fair, history, state.spot_history, now),
-            now=now, config=route_config, quote_history=history)
+        mode = state.mode if body.asset == "BTC" else "live"
+        if body.asset != "BTC":
+            books = await markets.get(body.asset, body.expiry)
+            surface = await markets.surface(body.asset)
+            observed_history = markets.histories.get((body.asset, expiry_key(body.expiry)))
+            history = observed_history.as_mapping() if observed_history else None
+            result = price_route(body, books, fair_fn=make_fair_fn(surface) if surface else None,
+                                 stale_fn=make_stale_fn(books, body.expiry, quote_history=history),
+                                 quote_history=history, config=route_config)
+            if body.asset in asset_markets.EQUITIES:
+                result.warnings.append("Stock contracts pay YES strictly above the strike. Equality pays NO. Venue rules govern closures and exceptional settlement.")
+        else:
+            key, books = _books(state, body.expiry)
+            fair, now = _fair(state, key, books), state.now()
+            history = state.history.as_mapping()
+            result = price_route(
+                body, books,
+                fair_fn=make_fair_fn(state.surface) if state.surface is not None else None,
+                stale_fn=make_stale_fn(books, key, fair, history, state.spot_history, now),
+                now=now, config=route_config, quote_history=history)
 
-        result.grok_snapshot = explainer.remember(body, result, "replay" if replayer else "live")
+        result.grok_snapshot = explainer.remember(body, result, "replay" if mode == "replay" else "live")
         if hasattr(store, "record_route"):
             selected = {(leg.venue, leg.contract) for leg in result.legs}
             quotes = [book.model_dump(mode="json") for book in books
@@ -252,12 +261,12 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
             benchmark_refs = {b.settlement_index.strip() for b in books}
             comparable = (result.filled_size == body.size and result.savings is not None
                           and len(refs) == 1 and "" not in refs and benchmark_refs == refs)
-            observed = state.last_poll.isoformat() if state.last_poll else result.timestamp
+            observed = state.last_poll.isoformat() if body.asset == "BTC" and state.last_poll else result.timestamp
             query = body.model_dump(mode="json")
-            evidence_id = fingerprint(query, {"poll": observed, "mode": state.mode})
+            evidence_id = fingerprint(query, {"poll": observed, "mode": mode})
             evidence = {"request": query, "route": result.model_dump(), "selected_books": quotes}
             try:
-                await asyncio.to_thread(store.record_route, evidence_id, observed, state.mode,
+                await asyncio.to_thread(store.record_route, evidence_id, observed, mode,
                                         result.savings * result.filled_size if comparable else None, evidence)
             except Exception:
                 logging.getLogger(__name__).exception("Route evidence write failed")
