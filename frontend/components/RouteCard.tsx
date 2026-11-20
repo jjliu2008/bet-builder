@@ -8,9 +8,9 @@ import MarketQualityPanel from "./MarketQualityPanel";
 
 function describe(r: RouteRequest): string {
   const e = expiryLabel(r.expiry);
-  if (r.type === "above") return `${r.asset} ${isStockOutcome(r.asset) ? "above" : "at or above"} ${usd(r.lo ?? r.hi ?? 0, 0)} at ${e}`;
-  if (r.type === "below") return `${r.asset} ${isStockOutcome(r.asset) ? "at or below" : "below"} ${usd(r.hi ?? r.lo ?? 0, 0)} at ${e}`;
-  return `${r.asset} between ${usd(r.lo ?? 0, 0)} and ${usd(r.hi ?? 0, 0)} at ${e}`;
+  if (r.type === "above") return `${r.asset} ${isStockOutcome(r.asset) ? "above" : "at or above"} ${usd(r.lo ?? r.hi ?? 0)} at ${e}`;
+  if (r.type === "below") return `${r.asset} ${isStockOutcome(r.asset) ? "at or below" : "below"} ${usd(r.hi ?? r.lo ?? 0)} at ${e}`;
+  return `${r.asset} between ${usd(r.lo ?? 0)} and ${usd(r.hi ?? 0)} at ${e}`;
 }
 
 const VERDICT_STYLE: Record<VerdictCode, { cls: string; label: string }> = {

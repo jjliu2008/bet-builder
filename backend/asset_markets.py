@@ -58,9 +58,31 @@ def catalog(asset):
                         and to_utc(market["close_time"]) > now):
                     out.setdefault(expiry_key(market["close_time"]), {})["short"] = market["event_ticker"]
         except requests.RequestException:
-            if asset == "BTC":
-                raise
+            pass
         if asset == "BTC":
+            try:
+                events = fetch(GAMMA + "/public-search", params={"q": "Bitcoin above",
+                               "events_status": "active", "limit_per_type": 100}).get("events", [])
+            except requests.RequestException:
+                if not out:
+                    raise
+                return out
+            for event in events:
+                if not event.get("slug", "").startswith("bitcoin-above-on-"):
+                    continue
+                for market in event.get("markets", []):
+                    rules = market.get("description", "")
+                    if not (market.get("acceptingOrders") and not market.get("closed")
+                            and "BTC/USDT" in rules and "Binance" in rules and "higher than" in rules
+                            and re.fullmatch(r"[0-9,]+(?:\.\d+)?", market.get("groupItemTitle", ""))
+                            and json.loads(market["outcomes"]) == ["Yes", "No"]
+                            and (not market.get("feesEnabled") or market.get("feeSchedule", {}).get("exponent") == 1)
+                            and to_utc(market["endDate"]) > now):
+                        continue
+                    key = expiry_key(market["endDate"])
+                    entry = out.setdefault(key, {})
+                    if "short" not in entry:
+                        entry.setdefault("polymarket", (event["slug"], []))[1].append(market)
             return out
         failures = 0
         try:
@@ -110,7 +132,9 @@ def catalog(asset):
 
 
 def books(asset, expiry, event):
-    if asset in CRYPTO or asset == "BTC":
+    if isinstance(event, dict) and "polymarket" in event:
+        event = event["polymarket"]
+    if isinstance(event, dict):
         result = []
         if event.get("gemini"):
             try:
@@ -149,14 +173,17 @@ def books(asset, expiry, event):
         if yes_id not in by_id or no_id not in by_id or expiry_key(m["endDate"]) != expiry:
             continue
         yes, no = by_id[yes_id], by_id[no_id]
-        strike = float(m["groupItemTitle"][1:].replace(",", ""))
+        strike = float(m["groupItemTitle"].lstrip("$").replace(",", ""))
+        if asset == "BTC":
+            # Binance BTC/USDT trades in cents. The contract requires a strictly higher close.
+            strike = round(strike + 0.01, 2)
         asks = [Level(price=float(x["price"]), size=float(x["size"])) for x in yes["asks"]]
         bids = [Level(price=round(1-float(x["price"]), 6), size=float(x["size"])) for x in no["asks"]]
         if bids or asks:
             result.append(Book(venue="polymarket", asset=asset, contract_id=m["conditionId"], strike=strike, lo=strike,
                 expiry=m["endDate"], updated=datetime.fromtimestamp(min(int(yes["timestamp"]),int(no["timestamp"]))/1000, timezone.utc),
                 yes_bids=bids, yes_asks=asks, fee_rate=m["feeSchedule"]["rate"] if m.get("feesEnabled") else 0,
-                settlement_index=f"{asset} official close · {slug}", link="https://polymarket.com/event/"+slug))
+                settlement_index=(f"Binance BTC/USDT minute close · {slug}" if asset == "BTC" else f"{asset} official close · {slug}"), link="https://polymarket.com/event/"+slug))
     return result
 
 
