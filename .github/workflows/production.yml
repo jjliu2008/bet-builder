@@ -75,6 +75,8 @@ jobs:
               raise SystemExit("Set the VERCEL_TOKEN repository secret and VERCEL_TEAM_ID repository variable.")
           url = "https://api.vercel.com/v13/deployments?" + urllib.parse.urlencode({"teamId": team})
           payload = {"name": "bet-builder-frontend", "target": "production",
+                     "projectSettings": {"rootDirectory": "frontend", "framework": "nextjs",
+                                         "buildCommand": "npm run build -- --webpack"},
                      "gitSource": {"type": "github", "repoId": int(os.environ["GITHUB_REPOSITORY_ID"]),
                                    "ref": "master", "sha": os.environ["GITHUB_SHA"]}}
           request = urllib.request.Request(url, data=json.dumps(payload).encode(),
