@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { ApiError, getExpiries, getLadder } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useExpiries } from "@/lib/useExpiries";
+import { ApiError, getLadder } from "@/lib/api";
 import { cents, expiryLabel, pct, usd } from "@/lib/format";
 import type { LadderRow, VenueQuote } from "@/lib/types";
 
@@ -25,37 +26,32 @@ export default function LadderPage() {
 }
 
 function AssetLadder({asset}: {asset: string}) {
-  const [expiries, setExpiries] = useState<string[]>([]);
-  const [expiry, setExpiry] = useState("");
+  const {expiries, expiry, setExpiry, loading, error: dateError, refresh} = useExpiries(asset);
   const [rows, setRows] = useState<LadderRow[] | null>(null);
   const [err, setErr] = useState<ApiError | null>(null);
-  const [onlyBoth, setOnlyBoth] = useState(asset === "BTC");
+  const [onlyBoth, setOnlyBoth] = useState(false);
   const shown = rows ? (onlyBoth ? rows.filter((r) => r.gemini && r.kalshi) : rows) : null;
 
-  useEffect(() => {
-    getExpiries(asset)
-      .then((e) => {
-        setExpiries(e);
-        if (!e.length) setRows([]);
-        setExpiry((cur) => cur || e[e.length - 1] || "");
-      })
-      .catch((e) => setErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0)));
-  }, [asset]);
-
+  const sequence = useRef(0);
   const load = useCallback(async (exp: string) => {
+    const request = ++sequence.current;
     setRows(null);
     setErr(null);
     try {
-      setRows(await getLadder(exp, asset));
+      const data = await getLadder(exp, asset);
+      if (sequence.current === request) setRows(data);
     } catch (e) {
+      if (sequence.current !== request) return;
       setErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0));
     }
   }, [asset]);
 
+  const invalidate = useCallback(() => { sequence.current++; }, []);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (expiry) load(expiry);
-  }, [expiry, load]);
+    return invalidate;
+  }, [expiry, load, invalidate]);
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:py-12 space-y-6">
@@ -85,16 +81,18 @@ function AssetLadder({asset}: {asset: string}) {
         </label>
       </div>
 
-      {err && (
+      {dateError && <p role="alert" className="note note-bad">{dateError.message} <button className="link" onClick={refresh}>Retry end times</button></p>}
+      {!expiry && !loading && !dateError && <p className="note">No listed end times for this asset right now.</p>}
+      {expiry && err && (
         <div role="alert" className="note note-bad">
           {err.message} {expiry && <button className="link ml-2" onClick={() => load(expiry)}>Retry</button>}
         </div>
       )}
-      {!rows && !err && <div className="card animate-pulse h-48" aria-busy="true" />}
-      {shown && shown.length === 0 && (
+      {(loading || (expiry && !rows && !err)) && <div className="card animate-pulse h-48" aria-busy="true" />}
+      {expiry && shown && shown.length === 0 && (
         <div className="card muted">{onlyBoth ? "No strike is listed on both venues for this expiry. Untick the filter to see all." : "No strikes listed for this expiry."}</div>
       )}
-      {shown && shown.length > 0 && (
+      {expiry && shown && shown.length > 0 && (
         <div className="card overflow-x-auto p-0 sm:p-0">
           <table className="num w-full text-sm">
             <thead className="table-head">

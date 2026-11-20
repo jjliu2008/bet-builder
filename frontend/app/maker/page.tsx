@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ASSET_GROUPS } from "@/lib/assets";
 import MakerChart from "@/components/MakerChart";
 import QuoteSimulator from "@/components/QuoteSimulator";
-import { ApiError, getExpiries, getLadder } from "@/lib/api";
+import { useExpiries } from "@/lib/useExpiries";
+import { ApiError, getLadder } from "@/lib/api";
 import { cents, expiryLabel, pct, venueName } from "@/lib/format";
 import { VENUES, summarize, toMakerRow, type MakerRow, type Touch } from "@/lib/maker";
 
@@ -40,8 +41,7 @@ export default function MakerDesk() {
 function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string) => void}) {
   const asset = symbol.replace(/x$/, "");
   const sequence = useRef(0);
-  const [expiries, setExpiries] = useState<string[]>([]);
-  const [expiry, setExpiry] = useState("");
+  const {expiries, expiry, setExpiry, loading, error: dateError, refresh} = useExpiries(asset);
   const [rows, setRows] = useState<MakerRow[] | null>(null);
   const [err, setErr] = useState<ApiError | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
@@ -49,19 +49,10 @@ function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string
   const [auto, setAuto] = useState(true);
   const [onlyBoth, setOnlyBoth] = useState(false);
 
-  useEffect(() => {
-    const refreshDates = () => getExpiries(asset)
-      .then((e) => {
-        setExpiries(e);
-        setExpiry((cur) => e.includes(cur) ? cur : e[0] || "");
-      })
-      .catch((e) => setErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0)));
-    refreshDates();
-    const timer = setInterval(refreshDates, 60_000);
-    return () => clearInterval(timer);
-  }, [asset]);
-
+  const pending = useRef<string | null>(null);
   const load = useCallback(async (exp: string, quiet = false) => {
+    if (quiet && pending.current === exp) return;
+    pending.current = exp;
     const request = ++sequence.current;
     if (!quiet) setRows(null);
     setErr(null);
@@ -83,13 +74,17 @@ function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string
     } catch (e) {
       if (sequence.current !== request) return;
       setErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0));
+    } finally {
+      if (sequence.current === request) pending.current = null;
     }
   }, [asset]);
 
+  const invalidate = useCallback(() => { sequence.current++; }, []);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (expiry) load(expiry);
-  }, [expiry, load]);
+    return invalidate;
+  }, [expiry, load, invalidate]);
 
   useEffect(() => {
     if (!auto || !expiry) return;
@@ -99,7 +94,7 @@ function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string
 
   const view = useMemo(() => (rows ? (onlyBoth ? rows.filter((r) => VENUES.filter(v => r.quotes[v]).length > 1) : rows) : null), [rows, onlyBoth]);
   const sum = useMemo(() => (view ? summarize(view) : null), [view]);
-  const selRow = view?.find((r) => r.strike === selected) ?? rows?.find((r) => r.strike === selected) ?? null;
+  const selRow = view?.find((r) => r.strike === selected) ?? view?.[0] ?? null;
 
   return (
     <main className="mx-auto w-full max-w-6xl space-y-6 px-4 py-8 sm:py-10">
@@ -135,7 +130,9 @@ function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string
       </header>
 
       {symbol !== asset && <p className="note">{symbol} routes settle on the {asset} stock close. This desk shows those prediction contracts.</p>}
-      {err && (
+      {dateError && <p role="alert" className="note note-bad">{dateError.message} <button className="link" onClick={refresh}>Retry end times</button></p>}
+      {!expiry && !loading && !dateError && <p className="note">No listed end times for this asset right now.</p>}
+      {expiry && err && (
         <div role="alert" className="note note-bad flex flex-wrap items-center justify-between gap-3">
           <span>
             {err.unavailable ? "Market data is warming up." : err.offline ? "Backend unreachable." : "Couldn't load the book."} {err.message}
@@ -148,7 +145,7 @@ function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string
         </div>
       )}
 
-      {!rows && !err && (
+      {(loading || (expiry && !rows && !err)) && (
         <div className="grid gap-4 sm:grid-cols-4" aria-busy="true">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="stat-tile h-24 animate-pulse" />
@@ -157,7 +154,7 @@ function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string
         </div>
       )}
 
-      {view && sum && (
+      {expiry && view && sum && (
         <>
           <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Desk summary">
             <Tile
@@ -211,7 +208,7 @@ function MarketDesk({symbol, onAsset}: {symbol: string; onAsset: (symbol: string
               </div>
               <span className="muted text-xs">{updated ? `Updated ${updated.toLocaleTimeString()}` : ""}</span>
             </div>
-            <MakerChart asset={asset} rows={view} selected={selected} onSelect={setSelected} />
+            <MakerChart asset={asset} rows={view} selected={selRow?.strike ?? null} onSelect={setSelected} />
           </section>
 
           <div className="grid gap-6 lg:grid-cols-[400px_1fr]">

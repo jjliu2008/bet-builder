@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ASSET_GROUPS } from "@/lib/assets";
+import { useExpiries } from "@/lib/useExpiries";
 import TokenQuote from "@/components/TokenQuote";
 import BetForm from "@/components/BetForm";
 import RouteCard from "@/components/RouteCard";
 import Alternatives from "@/components/Alternatives";
-import { ApiError, getExpiries, postRoute } from "@/lib/api";
+import { ApiError, postRoute } from "@/lib/api";
 import type { Route, RouteRequest } from "@/lib/types";
 
 type Result =
@@ -71,57 +72,39 @@ export default function AssetBuilder() {
 }
 
 function Builder({ asset, symbol }: { asset: string; symbol: string }) {
-  const [expiries, setExpiries] = useState<string[]>([]);
-  const [loadingExp, setLoadingExp] = useState(true);
-  const [expErr, setExpErr] = useState<ApiError | null>(null);
+  const {expiries, expiry, setExpiry, loading, error, refresh} = useExpiries(asset);
+  return <>
+    <TokenQuote symbol={symbol} expiries={expiries} pending={loading || (!!error && !expiries.length)} />
+    {error && <p role="alert" className="note note-bad mb-4">{error.message} <button className="link" onClick={refresh}>Retry end times</button></p>}
+    <ExpiryBuilder key={expiry} asset={asset} expiry={expiry} expiries={expiries} loading={loading} setExpiry={setExpiry} />
+  </>;
+}
+
+function ExpiryBuilder({asset, expiry, expiries, loading, setExpiry}: {
+  asset: string; expiry: string; expiries: string[]; loading: boolean; setExpiry: (value: string) => void;
+}) {
   const [result, setResult] = useState<Result>({ s: "idle" });
   const last = useRef<RouteRequest | null>(null);
 
-  const loadExpiries = useCallback(async () => {
-    setLoadingExp(true);
-    setExpErr(null);
-    try {
-      setExpiries(await getExpiries(asset));
-    } catch (e) {
-      setExpErr(e instanceof ApiError ? e : new ApiError("Unknown error", 0));
-    } finally {
-      setLoadingExp(false);
-    }
-  }, [asset]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadExpiries();
-    const timer = window.setInterval(loadExpiries, 60_000);
-    return () => window.clearInterval(timer);
-  }, [loadExpiries]);
-
+  const building = useRef(false);
   async function build(req: RouteRequest) {
+    if (building.current) return;
+    building.current = true;
     last.current = req;
     setResult({ s: "loading" });
     try {
       setResult({ s: "ok", route: await postRoute(req), req });
     } catch (e) {
       setResult({ s: "error", err: e instanceof ApiError ? e : new ApiError("Unknown error", 0) });
+    } finally {
+      building.current = false;
     }
   }
 
   return (
     <>
-      <TokenQuote symbol={symbol} expiries={expiries} pending={loadingExp || !!expErr} />
-      {expErr && (
-        <div role="alert" className="note note-bad mb-6 flex flex-wrap items-center justify-between gap-3">
-          <span>
-            {expErr.unavailable ? "Market data is still loading." : "Could not load expiries."} {expErr.message}
-          </span>
-          <button type="button" className="link" onClick={loadExpiries}>
-            Retry
-          </button>
-        </div>
-      )}
-
       <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
-        <BetForm asset={asset} expiries={expiries} loadingExpiries={loadingExp} busy={result.s === "loading"} onSubmit={build} />
+        <BetForm asset={asset} expiries={expiries} chosen={expiry} setExpiry={setExpiry} loadingExpiries={loading} busy={result.s === "loading"} onSubmit={build} />
 
         <div className="space-y-6" aria-live="polite">
           {result.s === "idle" && (

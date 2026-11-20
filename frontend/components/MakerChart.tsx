@@ -24,12 +24,13 @@ export default function MakerChart({ asset, rows, selected, onSelect }: { asset:
   const [w, setW] = useState(720);
   const [hover, setHover] = useState<number | null>(null);
 
+  const chartVisible = rows.length >= 2;
   useEffect(() => {
     if (!wrap.current) return;
     const ro = new ResizeObserver(([e]) => setW(Math.max(300, Math.round(e.contentRect.width))));
     ro.observe(wrap.current);
     return () => ro.disconnect();
-  }, []);
+  }, [chartVisible]);
 
   const { x, y, xTicks, paths, band } = useMemo(() => {
     const strikes = rows.map((r) => r.strike);
@@ -90,7 +91,7 @@ export default function MakerChart({ asset, rows, selected, onSelect }: { asset:
         </span>
       </div>
 
-      <div ref={wrap} className="relative">
+      <div ref={wrap} className="relative min-w-0 overflow-hidden">
         <svg
           width={w}
           height={H}

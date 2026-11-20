@@ -25,6 +25,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...init,
+      signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
       cache: "no-store",
     });
@@ -47,7 +48,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const getExpiries = (asset = "BTC") => request<string[]>(`/expiries?asset=${asset}`);
+export const getExpiries = (asset = "BTC", signal?: AbortSignal) => request<string[]>(`/expiries?asset=${asset}`, {signal});
 export const getLadder = (expiry: string, asset = "BTC") =>
   request<LadderRow[]>(`/ladder?asset=${asset}&expiry=${encodeURIComponent(expiry)}`);
 export const getHealth = () => request<Health>("/health");

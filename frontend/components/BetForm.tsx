@@ -10,6 +10,8 @@ interface Props {
   asset: string;
   expiries: string[];
   loadingExpiries: boolean;
+  chosen: string;
+  setExpiry: (expiry: string) => void;
   busy: boolean;
   onSubmit: (req: RouteRequest) => void;
 }
@@ -20,8 +22,9 @@ const TYPES: { id: BetType; label: string }[] = [
   { id: "between", label: "Between" },
 ];
 
-export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubmit }: Props) {
-  const [expiry, setExpiry] = useState("");
+export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubmit, chosen, setExpiry }: Props) {
+  const [attempt, retry] = useState(0);
+  const [bookError, setBookError] = useState(false);
   const [preferredType, setType] = useState<BetType>("between");
   const [manualLo, setLo] = useState<string | null>(null);
   const [manualHi, setHi] = useState<string | null>(null);
@@ -29,7 +32,7 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
   const [size, setSize] = useState("10");
   const [error, setError] = useState<string | null>(null);
 
-  const chosen = expiries.includes(expiry) ? expiry : expiries[0] || "";
+
 
   useEffect(() => {
     if (!chosen) return;
@@ -37,10 +40,10 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
     getLadder(chosen, asset).then(rows => {
       if (active) setLadder({ expiry: chosen, rows: [...rows].sort((a, b) => a.strike - b.strike) });
     }).catch(() => {
-      if (active) setLadder({ expiry: chosen, rows: [] });
+      if (active) setBookError(true);
     });
     return () => { active = false; };
-  }, [chosen, asset]);
+  }, [chosen, asset, attempt]);
 
   const rows = ladder?.expiry === chosen ? ladder.rows : [];
   const type = rows.length === 1 && preferredType === "between" ? "above" : preferredType;
@@ -187,9 +190,10 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
       </label>
 
       <datalist id="listed-strikes">{rows.map(row => <option key={row.strike} value={row.strike} />)}</datalist>
+      {bookError && <p role="alert">Could not load strikes. <button type="button" className="link" onClick={() => { setBookError(false); retry(n => n + 1); }}>Retry strikes</button></p>}
       {error && <p role="alert" className="text-sm text-bad">{error}</p>}
 
-      <button type="submit" disabled={busy || loadingExpiries || !chosen} className="btn w-full">
+      <button type="submit" disabled={busy || loadingExpiries || !chosen || !rows.length} className="btn w-full">
         {busy ? "Building route…" : "Build route"}
       </button>
     </form>
