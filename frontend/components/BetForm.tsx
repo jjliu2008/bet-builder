@@ -52,8 +52,35 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
   }
   const bids = rows.filter(row => hasDepth(row, "bid"));
   const asks = rows.filter(row => hasDepth(row, "ask"));
-  const lower = asks.find(row => type !== "between" || row.strike < (bids.at(-1)?.strike ?? 0));
-  const upper = bids.find(row => type !== "between" || row.strike > Number(manualLo ?? lower?.strike));
+  // The threshold nearest a 50-cent YES quote approximates the center for this expiry.
+  let center = rows[Math.floor(rows.length / 2)]?.strike ?? 0;
+  let smallestGap = Infinity;
+  for (const row of rows) {
+    const quotes = (["gemini", "kalshi"] as const).flatMap(venue => {
+      const q = row[venue];
+      return !row.stale[venue] && q && q.bid !== null && q.ask !== null && q.bid <= q.ask
+        ? [(q.bid + q.ask) / 2] : [];
+    });
+    const price = quotes.length ? quotes.reduce((sum, q) => sum + q, 0) / quotes.length : row.fair;
+    if (price == null || price < 0 || price > 1) continue;
+    const gap = Math.abs(price - 0.5);
+    if (gap < smallestGap) {
+      smallestGap = gap;
+      center = row.strike;
+    }
+  }
+  const nearest = (items: LadderRow[]) => items.reduce<LadderRow | undefined>((best, row) =>
+    !best || Math.abs(row.strike - center) < Math.abs(best.strike - center) ? row : best, undefined);
+  const ceiling = Number(manualHi ?? bids.at(-1)?.strike);
+  const eligibleLower = asks.filter(row => row.strike < ceiling);
+  const lower = type === "between"
+    ? eligibleLower.filter(row => row.strike < center).at(-1) ?? nearest(eligibleLower)
+    : nearest(asks);
+  const floor = Number(manualLo ?? lower?.strike);
+  const eligibleUpper = bids.filter(row => row.strike > floor);
+  const upper = type === "between"
+    ? eligibleUpper.find(row => row.strike > center) ?? nearest(eligibleUpper)
+    : nearest(bids);
   const lo = manualLo ?? String(lower?.strike ?? "");
   const hi = manualHi ?? String(upper?.strike ?? "");
 
