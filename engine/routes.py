@@ -169,7 +169,7 @@ def _fmt_k(k: float) -> str:
 
 def _kk(x: Optional[float]) -> Optional[float]:
     """Return a canonical strike key in $, rounded to the cent."""
-    return None if x is None else round(float(x), 2)
+    return None if x is None else round(float(x), 8)
 
 
 # ---- book walking across venues ---------------------------------------------------------

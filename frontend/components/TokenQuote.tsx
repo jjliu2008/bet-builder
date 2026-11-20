@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { getTokenQuote } from "@/lib/api";
-import { usd } from "@/lib/format";
+import { expiryLabel, usd } from "@/lib/format";
 
-export default function TokenQuote({ symbol }: { symbol: string }) {
+export default function TokenQuote({ symbol, expiries, pending }: { symbol: string; expiries: string[]; pending: boolean }) {
   const [quote, setQuote] = useState<Awaited<ReturnType<typeof getTokenQuote>>>();
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -25,10 +25,10 @@ export default function TokenQuote({ symbol }: { symbol: string }) {
   }
 
   return (
-    <section className="card max-w-xl space-y-3" aria-live="polite">
-      <div className="flex items-center justify-between gap-2">
+    <section className="card mb-6 grid gap-5 sm:grid-cols-2" aria-live="polite">
+      <div className="space-y-2"><div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">{symbol} · USD</h2>
-        <span className="pill">Price only</span>
+
       </div>
       {quote ? <>
         <p className="num text-3xl font-semibold">{usd(quote.price_usd)}</p>
@@ -40,8 +40,9 @@ export default function TokenQuote({ symbol }: { symbol: string }) {
           <div className="h-4 w-64 animate-pulse rounded bg-line" />
         </div>
       )}
-      <p className="muted text-sm">Reference price as of the displayed time. The builder uses separately listed prediction contracts.</p>
-      <button type="button" className="btn-outline" disabled={!quote && !error} onClick={refresh}>Refresh price</button>
+
+      <button type="button" className="btn-outline" disabled={!quote && !error} onClick={refresh}>Refresh price</button></div>
+      <div className="stat-tile space-y-1 p-4"><p className="label">Listed end times</p><p className="num text-2xl font-semibold">{pending ? "—" : expiries.length}</p>{!pending && expiries[0] && <p className="muted text-sm">Next close · {expiryLabel(expiries[0])}</p>}{symbol.endsWith("x") && <p className="text-sm">Routes settle on the underlying {symbol.slice(0,-1)} stock close.</p>}</div>
     </section>
   );
 }

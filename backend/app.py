@@ -114,6 +114,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     route_config = RouteConfig(exclude_crossed_books=True, require_common_settlement=True)
     chain = chain if chain is not None else load_chain()
     store = receipt_store if receipt_store is not None else ReceiptStore()
+    use_live_catalog = state is None and poller is None and replayer is None and not os.environ.get("REPLAY_FILE")
     if state is None and poller is None and replayer is None:
         replay_file = os.environ.get("REPLAY_FILE")
         if replay_file:
@@ -187,17 +188,30 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
         """Always HTTP 200 while the process is up; read `status` for data health."""
         return state.health()
 
+    def external_listing(asset, expiry):
+        if asset != "BTC":
+            return True
+        if not use_live_catalog:
+            return False
+        try:
+            return expiry_key(expiry) not in state.live_expiries
+        except ValueError:
+            return False
+
     @app.get("/expiries")
     async def expiries(asset: str = Query("BTC")) -> List[str]:
         if _asset(asset) != "BTC":
             return await markets.get(_asset(asset))
         _ready(state)
+        if use_live_catalog:
+            with contextlib.suppress(HTTPException):
+                return sorted(set(state.live_expiries).union(await markets.get("BTC")))
         return state.live_expiries
 
     @app.get("/ladder")
     async def ladder(expiry: str, asset: str = Query("BTC")) -> List[dict]:
         asset = _asset(asset)
-        if asset != "BTC":
+        if external_listing(asset, expiry):
             books = await markets.get(asset, expiry)
             surface = None if fair_hidden(expiry) else await markets.surface(asset)
             strikes = sorted({b.strike for b in books if b.strike is not None})
@@ -214,7 +228,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     @app.get("/fair-value")
     async def fair_value(request: RouteRequest = Query()) -> dict:
         asset = _asset(request.asset)
-        if asset != "BTC":
+        if external_listing(asset, request.expiry):
             await markets.get(asset, request.expiry)
             surface = await markets.surface(asset)
             value = fair_for_request(request, surface) if surface and not fair_hidden(request.expiry) else None
@@ -230,7 +244,7 @@ def create_app(state: Optional[State] = None, poller: Optional[Poller] = None,
     async def route(body: RouteRequest) -> Route:
         body = body.model_copy(update={"asset": _asset(body.asset)})
         mode = state.mode if body.asset == "BTC" else "live"
-        if body.asset != "BTC":
+        if external_listing(body.asset, body.expiry):
             books = await markets.get(body.asset, body.expiry)
             surface = None if fair_hidden(body.expiry) else await markets.surface(body.asset)
             observed_history = markets.histories.get((body.asset, expiry_key(body.expiry)))

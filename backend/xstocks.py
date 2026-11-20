@@ -36,7 +36,7 @@ def last_trade(symbol: str):
 @router.get("/spot/{symbol}")
 def spot_quote(symbol: str):
     stocks = {"AAPL", "NVDA", "MSFT", "TSLA"}
-    crypto = {"ETH", "SOL"}
+    crypto = {"BTC", "ETH", "SOL"}
     if symbol not in stocks | crypto:
         raise HTTPException(404, "Unknown spot symbol")
     try:

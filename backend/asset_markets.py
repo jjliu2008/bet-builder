@@ -48,8 +48,20 @@ def eth_surface(asset):
 
 def catalog(asset):
     now = datetime.now(timezone.utc)
-    if asset in CRYPTO:
+    if asset in CRYPTO or asset == "BTC":
         out = {}
+        short_series = f"KX{asset}15M"
+        try:
+            short = fetch(BASE_URL + "/markets", params={"series_ticker": short_series, "status": "open", "limit": 100})
+            for market in short["markets"]:
+                if (market.get("strike_type") == "greater_or_equal" and market.get("floor_strike") is not None
+                        and to_utc(market["close_time"]) > now):
+                    out.setdefault(expiry_key(market["close_time"]), {})["short"] = market["event_ticker"]
+        except requests.RequestException:
+            if asset == "BTC":
+                raise
+        if asset == "BTC":
+            return out
         failures = 0
         try:
             events = fetch(BASE_URL + "/events", params={"series_ticker": CRYPTO[asset], "status": "open",
@@ -67,11 +79,23 @@ def catalog(asset):
                     out.setdefault(key, {}).setdefault("gemini", []).append((contract, event))
         except (OSError, RuntimeError, ValueError, httpx.HTTPError):
             failures += 1
-        if failures == 2:
+        if failures == 2 and not out:
             raise requests.RequestException("Both catalogs unavailable")
         return out
     events = fetch(GAMMA + "/public-search", params={"q": asset + " above", "events_status": "active",
                    "limit_per_type": 50}).get("events", [])
+    series_ids = {series["id"] for event in events if event.get("slug", "").startswith(asset.lower()+"-")
+                  for series in event.get("series", []) if series.get("id")}
+    seen = {event["slug"] for event in events}
+    for series_id in sorted(series_ids)[:5]:
+        try:
+            related = fetch(GAMMA + "/events", params={"series_id": series_id, "active": "true", "closed": "false", "limit": 100})
+        except requests.RequestException:
+            continue
+        for event in related:
+            if event["slug"] not in seen:
+                events.append(event)
+                seen.add(event["slug"])
     out = {}
     for e in sorted(events, key=lambda e: "close-above" not in e["slug"]):
         if not e["slug"].startswith((asset.lower()+"-close-above-", asset.lower()+"-above-")):
@@ -86,31 +110,33 @@ def catalog(asset):
 
 
 def books(asset, expiry, event):
-    if asset in CRYPTO:
+    if asset in CRYPTO or asset == "BTC":
         result = []
         if event.get("gemini"):
             try:
                 result = asyncio.run(asyncio.wait_for(gemini_snapshot(asset, event["gemini"]), timeout=8))
             except TimeoutError:
-                if not event.get("kalshi"):
+                if not (event.get("kalshi") or event.get("short")):
                     raise requests.Timeout("Gemini books timed out")
         markets = []
-        if event.get("kalshi"):
+        for ticker in filter(None, (event.get("kalshi"), event.get("short"))):
             try:
-                markets = fetch(BASE_URL + "/markets", params={"event_ticker": event["kalshi"], "limit": 1000, "status": "open"})["markets"]
+                markets.extend(fetch(BASE_URL + "/markets", params={"event_ticker": ticker, "limit": 1000, "status": "open"})["markets"])
             except requests.RequestException:
-                if not result:
+                if not result and not markets and ticker == (event.get("short") or event.get("kalshi")):
                     raise
         now = datetime.now(timezone.utc)
         for m in markets:
-            if m.get("strike_type") != "greater" or expiry_key(m["close_time"]) != expiry:
+            if m.get("strike_type") not in ("greater", "greater_or_equal") or m.get("floor_strike") is None or expiry_key(m["close_time"]) != expiry:
                 continue
             bids, asks = _kalshi_top(m)
             if bids or asks:
-                strike = round(m["floor_strike"] + (0.0001 if asset == "SOL" else 0.01), 4)
+                strike = float(m["floor_strike"])
+                if m["strike_type"] == "greater":
+                    strike = round(strike + (0.0001 if asset == "SOL" else 0.01), 4)
                 result.append(Book(venue="kalshi", asset=asset, contract_id=m["ticker"], strike=strike, lo=strike,
                     expiry=m["close_time"], updated=now, yes_bids=bids, yes_asks=asks,
-                    settlement_index=f"CF Benchmarks {asset} 60-second average", link="https://kalshi.com/markets/"+CRYPTO[asset].lower()))
+                    settlement_index=f"CF Benchmarks {asset} 60-second average", link="https://kalshi.com/markets/"+m["ticker"].split("-")[0].lower()))
         return result
     slug, markets = event
     ids = [token for m in markets for token in json.loads(m["clobTokenIds"])]

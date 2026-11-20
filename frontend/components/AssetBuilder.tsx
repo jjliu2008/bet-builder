@@ -46,25 +46,17 @@ export default function AssetBuilder() {
   return (
     <>
       <section className="card mb-6 space-y-3 py-4 sm:py-4" aria-label="Underlying asset">
-        <span className="label">Underlying asset</span>
-        <div className="flex flex-wrap gap-x-6 gap-y-3">
+        <h2 className="text-lg font-semibold">Choose a routed asset</h2>
+        <div className="grid gap-4 sm:grid-cols-3">
           {ASSET_GROUPS.map((g) => (
-            <div key={g.title} className="space-y-1.5">
-              <div className="flex items-center gap-2 text-xs">
-                <span className={`pill ${g.pill}`}>{g.title}</span>
-                <span className="muted">{g.hint}</span>
-              </div>
-              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={g.title}>
-                {g.items.map((it) => (
-                  <button
-                    key={it.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={asset === it.value}
-                    onClick={() => setAsset(it.value)}
-                    className={`seg ${asset === it.value ? "seg-on" : ""}`}
-                  >
-                    {it.label}
+            <div key={g.title} className="stat-tile space-y-3 p-4">
+              <h3 className="label">{g.title}</h3>
+              <div className="flex flex-wrap gap-2">
+                {g.items.map(([value,label]) => (
+                  <button key={value} type="button" aria-pressed={asset === value}
+                    onClick={() => setAsset(value)} title={label}
+                    className={`seg ${asset === value ? "seg-on" : ""}`}>
+                    {value}
                   </button>
                 ))}
               </div>
@@ -72,47 +64,18 @@ export default function AssetBuilder() {
           ))}
         </div>
       </section>
-      {asset !== "BTC" && <TokenQuote key={asset} symbol={asset} />}
-      {asset.endsWith("x") && <p className="note my-3">The route below settles on the underlying stock’s close. The token has its own spot price.</p>}
-      <Builder key={"route-"+asset} asset={asset.replace(/x$/, "")} />
+      <Builder key={asset} symbol={asset} asset={asset.replace(/x$/, "")} />
     </>
   );
 }
 
 const ASSET_GROUPS = [
-  { title: "Prediction routes", hint: "Gemini × Kalshi books, Deribit fair value", pill: "pill-good", items: [{ value: "BTC", label: "Bitcoin (BTC)" }] },
-  {
-    title: "Stocks",
-    hint: "regular-session price",
-    pill: "",
-    items: [
-      { value: "AAPL", label: "Apple" },
-      { value: "NVDA", label: "NVIDIA" },
-      { value: "MSFT", label: "Microsoft" },
-      { value: "TSLA", label: "Tesla" },
-    ],
-  },
-  {
-    title: "Crypto",
-    hint: "USD spot",
-    pill: "",
-    items: [
-      { value: "ETH", label: "Ethereum" },
-      { value: "SOL", label: "Solana" },
-    ],
-  },
-  {
-    title: "Tokenized stocks",
-    hint: "xStocks",
-    pill: "",
-    items: [
-      { value: "AAPLx", label: "AAPLx" },
-      { value: "NVDAx", label: "NVDAx" },
-    ],
-  },
+  { title: "Cryptocurrencies", items: [["BTC","Bitcoin"], ["ETH","Ethereum"], ["SOL","Solana"]] },
+  { title: "Stocks", items: [["AAPL","Apple"], ["NVDA","NVIDIA"], ["MSFT","Microsoft"], ["TSLA","Tesla"]] },
+  { title: "Tokenized stocks · RWAs", items: [["AAPLx","Apple xStock"], ["NVDAx","NVIDIA xStock"]] },
 ];
 
-function Builder({ asset }: { asset: string }) {
+function Builder({ asset, symbol }: { asset: string; symbol: string }) {
   const [expiries, setExpiries] = useState<string[]>([]);
   const [loadingExp, setLoadingExp] = useState(true);
   const [expErr, setExpErr] = useState<ApiError | null>(null);
@@ -134,6 +97,8 @@ function Builder({ asset }: { asset: string }) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadExpiries();
+    const timer = window.setInterval(loadExpiries, 60_000);
+    return () => window.clearInterval(timer);
   }, [loadExpiries]);
 
   async function build(req: RouteRequest) {
@@ -148,6 +113,7 @@ function Builder({ asset }: { asset: string }) {
 
   return (
     <>
+      <TokenQuote symbol={symbol} expiries={expiries} pending={loadingExp || !!expErr} />
       {expErr && (
         <div role="alert" className="note note-bad mb-6 flex flex-wrap items-center justify-between gap-3">
           <span>

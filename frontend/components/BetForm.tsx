@@ -22,14 +22,14 @@ const TYPES: { id: BetType; label: string }[] = [
 
 export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubmit }: Props) {
   const [expiry, setExpiry] = useState("");
-  const [type, setType] = useState<BetType>("between");
+  const [preferredType, setType] = useState<BetType>("between");
   const [manualLo, setLo] = useState<string | null>(null);
   const [manualHi, setHi] = useState<string | null>(null);
   const [ladder, setLadder] = useState<{ expiry: string; rows: LadderRow[] } | null>(null);
   const [size, setSize] = useState("10");
   const [error, setError] = useState<string | null>(null);
 
-  const chosen = expiry || expiries[0] || "";
+  const chosen = expiries.includes(expiry) ? expiry : expiries[0] || "";
 
   useEffect(() => {
     if (!chosen) return;
@@ -43,6 +43,8 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
   }, [chosen, asset]);
 
   const rows = ladder?.expiry === chosen ? ladder.rows : [];
+  const type = rows.length === 1 && preferredType === "between" ? "above" : preferredType;
+  const availableTypes = rows.length === 1 ? TYPES.filter(t => t.id !== "between") : TYPES;
   function hasDepth(row: LadderRow, side: "bid" | "ask") {
     return (["gemini", "kalshi", "polymarket"] as const).some(venue => {
       const q = row[venue];
@@ -131,7 +133,7 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
       <div>
         <span className="label">{asset} finishes</span>
         <div className="grid grid-cols-3 gap-2" role="radiogroup">
-          {TYPES.map((t) => (
+          {availableTypes.map((t) => (
             <button
               type="button"
               key={t.id}
@@ -174,7 +176,7 @@ export default function BetForm({ asset, expiries, loadingExpiries, busy, onSubm
       </div>
 
       {rows.length > 0 && <div className="flex flex-wrap gap-2 text-xs" aria-label="Examples from this market">
-        {TYPES.map(example => <button key={example.id} type="button" className="link"
+        {availableTypes.map(example => <button key={example.id} type="button" className="link"
           onClick={() => { setType(example.id); setLo(null); setHi(null); setError(null); }}>
           Try {example.label.toLowerCase()} near the market center
         </button>)}
